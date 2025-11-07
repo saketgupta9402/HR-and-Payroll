@@ -59,6 +59,15 @@ async function ensureBaseTables(client: any) {
   await client.query(`CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(org_id);`);
 }
 
+export async function ensurePayrollUserTables(): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await ensureBaseTables(client);
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Upsert Payroll user from HR SSO data
  * 

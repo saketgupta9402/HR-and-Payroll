@@ -11,7 +11,7 @@
 import { Router, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { verifyHrSsoToken } from '../middleware/sso.js';
-import { upsertPayrollUser, getPayrollUserById } from '../services/user-service.js';
+import { upsertPayrollUser, getPayrollUserById, ensurePayrollUserTables } from '../services/user-service.js';
 import { query } from '../db.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -38,6 +38,9 @@ router.get('/sso', verifyHrSsoToken, async (req: Request, res: Response) => {
         message: 'Failed to extract user from SSO token'
       });
     }
+
+    // Ensure required payroll tables exist before proceeding
+    await ensurePayrollUserTables();
 
     // Auto-provision user (create or update)
     let user;

@@ -1916,7 +1916,7 @@ appRouter.get("/payroll/new-cycle-data", requireAuth, async (req, res) => {
   const { rows: compRows } = await query(
     `SELECT SUM(cs.ctc / 12) as total
      FROM compensation_structures cs
-     JOIN payroll_employee_view e ON e.employee_id = cs.employee_id::text
+     JOIN payroll_employee_view e ON e.employee_id = cs.employee_id
      WHERE e.org_id = $1 
        AND e.employment_status = 'active'
        AND (e.date_of_joining IS NULL OR e.date_of_joining <= $2)
