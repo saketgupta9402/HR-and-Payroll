@@ -659,9 +659,11 @@ CREATE TABLE IF NOT EXISTS payroll_components (
   is_fixed_component BOOLEAN NOT NULL DEFAULT true,
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, LOWER(name))
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_payroll_components_tenant_name
+  ON payroll_components(tenant_id, LOWER(name));
 
 CREATE TABLE IF NOT EXISTS employee_salary_structure (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
