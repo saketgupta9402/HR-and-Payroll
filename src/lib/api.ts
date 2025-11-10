@@ -1,6 +1,6 @@
 // API Client - Replaces Supabase client
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_URL = (import.meta as any).env.VITE_API_URL || 'http://localhost:3001';
 
 class ApiClient {
   private baseURL: string;
@@ -975,6 +975,115 @@ class ApiClient {
   // Payroll SSO
   async getPayrollSso() {
     return this.request('/api/payroll/sso');
+  }
+
+  async getPayrollRuns(params?: { status?: string; limit?: number; offset?: number }) {
+    const searchParams = new URLSearchParams();
+    if (params?.status) searchParams.append('status', params.status);
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.offset) searchParams.append('offset', params.offset.toString());
+    const query = searchParams.toString() ? `?${searchParams.toString()}` : '';
+    return this.request(`/api/payroll/runs${query}`);
+  }
+
+  async getPayrollRunAdjustments(runId: string) {
+    return this.request(`/api/payroll/runs/${runId}/adjustments`);
+  }
+
+  async createPayrollRunAdjustment(runId: string, data: {
+    employee_id: string;
+    component_name: string;
+    amount: number;
+    is_taxable?: boolean;
+    notes?: string;
+  }) {
+    return this.request(`/api/payroll/runs/${runId}/adjustments`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updatePayrollRunAdjustment(adjustmentId: string, data: {
+    component_name?: string;
+    amount?: number;
+    is_taxable?: boolean;
+    notes?: string;
+  }) {
+    return this.request(`/api/payroll/adjustments/${adjustmentId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deletePayrollRunAdjustment(adjustmentId: string) {
+    return this.request(`/api/payroll/adjustments/${adjustmentId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getTaxDefinitions(financialYear: string) {
+    return this.request(`/api/tax/declarations/definitions?financial_year=${encodeURIComponent(financialYear)}`);
+  }
+
+  async getMyTaxDeclaration(financialYear: string) {
+    return this.request(`/api/tax/declarations/me?financial_year=${encodeURIComponent(financialYear)}`);
+  }
+
+  async saveTaxDeclaration(data: {
+    financial_year: string;
+    chosen_regime: 'old' | 'new';
+    status: 'draft' | 'submitted';
+    items: Array<{
+      component_id: string;
+      declared_amount: number;
+      proof_url?: string;
+      notes?: string;
+    }>;
+  }) {
+    return this.request('/api/tax/declarations', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getTaxDeclarations(params?: { financial_year?: string; status?: string }) {
+    const searchParams = new URLSearchParams();
+    if (params?.financial_year) searchParams.append('financial_year', params.financial_year);
+    if (params?.status) searchParams.append('status', params.status);
+    const queryString = searchParams.toString() ? `?${searchParams.toString()}` : '';
+    return this.request(`/api/tax/declarations${queryString}`);
+  }
+
+  async reviewTaxDeclaration(
+    declarationId: string,
+    data: {
+      status: 'approved' | 'rejected';
+      items?: Array<{ id: string; approved_amount?: number; notes?: string }>;
+      remarks?: string;
+    }
+  ) {
+    return this.request(`/api/tax/declarations/${declarationId}/review`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async downloadForm16(financialYear: string, employeeId?: string) {
+    const params = new URLSearchParams();
+    params.append('financial_year', financialYear);
+    if (employeeId) {
+      params.append('employee_id', employeeId);
+    }
+    const url = `${this.baseURL}/api/reports/form16?${params.toString()}`;
+    const headers: HeadersInit = {};
+    if (this._token) {
+      headers['Authorization'] = `Bearer ${this._token}`;
+    }
+    const response = await fetch(url, { headers });
+    if (!response.ok) {
+      throw new Error('Failed to download Form 16');
+    }
+    return response.blob();
   }
 }
 

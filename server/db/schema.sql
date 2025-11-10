@@ -17,6 +17,8 @@ CREATE TABLE organizations (
   industry TEXT,
   timezone TEXT DEFAULT 'Asia/Kolkata',
   logo_url TEXT,
+  company_pan TEXT,
+  company_tan TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
@@ -117,4 +119,122 @@ CREATE TRIGGER update_employees_updated_at
 CREATE TRIGGER update_organizations_updated_at
   BEFORE UPDATE ON organizations
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Payroll component types
+CREATE TYPE payroll_component_type AS ENUM ('earning', 'deduction');
+
+CREATE TABLE payroll_components (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE NOT NULL,
+  name TEXT NOT NULL,
+  component_type payroll_component_type NOT NULL,
+  is_taxable BOOLEAN NOT NULL DEFAULT true,
+  is_fixed_component BOOLEAN NOT NULL DEFAULT true,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, LOWER(name))
+);
+
+CREATE TABLE employee_salary_structure (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE NOT NULL,
+  employee_id UUID REFERENCES employees(id) ON DELETE CASCADE NOT NULL,
+  component_id UUID REFERENCES payroll_components(id) ON DELETE CASCADE NOT NULL,
+  amount NUMERIC(12,2) NOT NULL CHECK (amount >= 0),
+  is_taxable_override BOOLEAN,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (employee_id, component_id)
+);
+
+CREATE INDEX idx_employee_salary_structure_employee ON employee_salary_structure(employee_id);
+CREATE INDEX idx_employee_salary_structure_component ON employee_salary_structure(component_id);
+
+CREATE TABLE payroll_run_adjustments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE NOT NULL,
+  payroll_run_id UUID REFERENCES payroll_runs(id) ON DELETE CASCADE NOT NULL,
+  employee_id UUID REFERENCES employees(id) ON DELETE CASCADE NOT NULL,
+  component_name TEXT NOT NULL,
+  amount NUMERIC(12,2) NOT NULL,
+  is_taxable BOOLEAN NOT NULL DEFAULT true,
+  created_by UUID REFERENCES profiles(id),
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_payroll_adjustments_run ON payroll_run_adjustments(payroll_run_id);
+CREATE INDEX idx_payroll_adjustments_employee ON payroll_run_adjustments(employee_id);
+
+CREATE TABLE tax_component_definitions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE NOT NULL,
+  financial_year TEXT NOT NULL,
+  component_code TEXT NOT NULL,
+  label TEXT NOT NULL,
+  section TEXT NOT NULL,
+  section_group TEXT,
+  max_limit NUMERIC(12,2),
+  metadata JSONB DEFAULT '{}'::jsonb,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, financial_year, component_code)
+);
+
+CREATE INDEX idx_tax_component_definitions_tenant_year ON tax_component_definitions(tenant_id, financial_year);
+CREATE INDEX idx_tax_component_definitions_group ON tax_component_definitions(section_group);
+
+CREATE TABLE tax_declarations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE NOT NULL,
+  employee_id UUID REFERENCES employees(id) ON DELETE CASCADE NOT NULL,
+  financial_year TEXT NOT NULL,
+  chosen_regime TEXT NOT NULL CHECK (chosen_regime IN ('old', 'new')),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'approved', 'rejected')),
+  submitted_at TIMESTAMPTZ,
+  approved_at TIMESTAMPTZ,
+  approved_by UUID REFERENCES profiles(id),
+  remarks TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (employee_id, financial_year)
+);
+
+CREATE INDEX idx_tax_declarations_tenant ON tax_declarations(tenant_id);
+CREATE INDEX idx_tax_declarations_employee_year ON tax_declarations(employee_id, financial_year);
+
+CREATE TABLE tax_declaration_items (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  declaration_id UUID REFERENCES tax_declarations(id) ON DELETE CASCADE NOT NULL,
+  component_id UUID REFERENCES tax_component_definitions(id) ON DELETE CASCADE NOT NULL,
+  declared_amount NUMERIC(12,2) NOT NULL CHECK (declared_amount >= 0),
+  approved_amount NUMERIC(12,2) CHECK (approved_amount >= 0),
+  proof_url TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (declaration_id, component_id)
+);
+
+CREATE INDEX idx_tax_declaration_items_declaration ON tax_declaration_items(declaration_id);
+
+CREATE TABLE tax_regimes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+  financial_year TEXT NOT NULL,
+  regime_type TEXT NOT NULL CHECK (regime_type IN ('old', 'new')),
+  slabs JSONB NOT NULL,
+  standard_deduction NUMERIC(12,2) NOT NULL DEFAULT 0,
+  surcharge_rules JSONB DEFAULT '[]'::jsonb,
+  cess_percentage NUMERIC(5,2) DEFAULT 4,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (COALESCE(tenant_id::text, 'global'), financial_year, regime_type)
+);
+
+CREATE INDEX idx_tax_regimes_tenant_year ON tax_regimes(tenant_id, financial_year);
 

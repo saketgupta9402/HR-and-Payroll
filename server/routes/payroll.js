@@ -11,6 +11,21 @@ import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { requireCapability, CAPABILITIES } from '../policy/authorize.js';
 import { audit } from '../utils/auditLog.js';
 import { Parser } from 'json2csv';
+import { calculateMonthlyTDS } from '../services/taxEngine.js';
+
+const getFinancialYearForDate = (dateString) => {
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const startYear = now.getMonth() >= 3 ? year : year - 1;
+    return `${startYear}-${startYear + 1}`;
+  }
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const startYear = month >= 3 ? year : year - 1;
+  return `${startYear}-${startYear + 1}`;
+};
 
 const router = express.Router();
 
@@ -47,10 +62,26 @@ const ensurePayrollTables = async () => {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS payroll_run_adjustments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE NOT NULL,
+      payroll_run_id UUID REFERENCES payroll_runs(id) ON DELETE CASCADE NOT NULL,
+      employee_id UUID REFERENCES employees(id) ON DELETE CASCADE NOT NULL,
+      component_name TEXT NOT NULL,
+      amount NUMERIC(12,2) NOT NULL,
+      is_taxable BOOLEAN NOT NULL DEFAULT true,
+      created_by UUID REFERENCES profiles(id),
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_payroll_runs_tenant ON payroll_runs(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_payroll_runs_status ON payroll_runs(status);
     CREATE INDEX IF NOT EXISTS idx_payroll_run_employees_run ON payroll_run_employees(payroll_run_id);
     CREATE INDEX IF NOT EXISTS idx_payroll_run_employees_employee ON payroll_run_employees(employee_id);
+    CREATE INDEX IF NOT EXISTS idx_payroll_adjustments_run ON payroll_run_adjustments(payroll_run_id);
+    CREATE INDEX IF NOT EXISTS idx_payroll_adjustments_employee ON payroll_run_adjustments(employee_id);
   `).catch(err => {
     if (!err.message.includes('already exists')) {
       console.error('Error creating payroll tables:', err);
@@ -60,14 +91,18 @@ const ensurePayrollTables = async () => {
 
 ensurePayrollTables();
 
+const getTenantIdForUser = async (userId) => {
+  const tenantResult = await query(
+    'SELECT tenant_id FROM profiles WHERE id = $1',
+    [userId]
+  );
+  return tenantResult.rows[0]?.tenant_id || null;
+};
+
 // Get payroll calendar
 router.get('/calendar', authenticateToken, async (req, res) => {
   try {
-    const tenantResult = await query(
-      'SELECT tenant_id FROM profiles WHERE id = $1',
-      [req.user.id]
-    );
-    const tenantId = tenantResult.rows[0]?.tenant_id;
+    const tenantId = await getTenantIdForUser(req.user.id);
 
     if (!tenantId) {
       return res.status(403).json({ error: 'No organization found' });
@@ -100,11 +135,7 @@ router.get('/calendar', authenticateToken, async (req, res) => {
 // Get all payroll runs
 router.get('/runs', authenticateToken, requireCapability(CAPABILITIES.PAYROLL_RUN), async (req, res) => {
   try {
-    const tenantResult = await query(
-      'SELECT tenant_id FROM profiles WHERE id = $1',
-      [req.user.id]
-    );
-    const tenantId = tenantResult.rows[0]?.tenant_id;
+    const tenantId = await getTenantIdForUser(req.user.id);
 
     if (!tenantId) {
       return res.status(403).json({ error: 'No organization found' });
@@ -201,6 +232,229 @@ router.get('/runs/:id', authenticateToken, async (req, res) => {
   }
 });
 
+router.get('/runs/:id/adjustments', authenticateToken, requireCapability(CAPABILITIES.PAYROLL_RUN), async (req, res) => {
+  try {
+    const tenantId = await getTenantIdForUser(req.user.id);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No organization found' });
+    }
+
+    const { id } = req.params;
+
+    const runResult = await query(
+      'SELECT id FROM payroll_runs WHERE id = $1 AND tenant_id = $2',
+      [id, tenantId]
+    );
+
+    if (runResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Payroll run not found' });
+    }
+
+    const adjustments = await query(
+      `SELECT pra.*,
+        json_build_object(
+          'id', e.id,
+          'employee_id', e.employee_id
+        ) AS employee
+       FROM payroll_run_adjustments pra
+       JOIN employees e ON e.id = pra.employee_id
+       WHERE pra.payroll_run_id = $1
+         AND pra.tenant_id = $2
+       ORDER BY pra.created_at DESC`,
+      [id, tenantId]
+    );
+
+    res.json(adjustments.rows);
+  } catch (error) {
+    console.error('Error fetching payroll adjustments:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch payroll adjustments' });
+  }
+});
+
+router.post('/runs/:id/adjustments', authenticateToken, requireCapability(CAPABILITIES.PAYROLL_RUN), async (req, res) => {
+  try {
+    const tenantId = await getTenantIdForUser(req.user.id);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No organization found' });
+    }
+
+    const { id } = req.params;
+    const { employee_id, component_name, amount, is_taxable = true, notes } = req.body;
+
+    if (!employee_id || !component_name || amount === undefined || amount === null) {
+      return res.status(400).json({ error: 'employee_id, component_name and amount are required' });
+    }
+
+    const runResult = await query(
+      'SELECT id, status FROM payroll_runs WHERE id = $1 AND tenant_id = $2',
+      [id, tenantId]
+    );
+
+    if (runResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Payroll run not found' });
+    }
+
+    if (runResult.rows[0].status !== 'draft') {
+      return res.status(400).json({ error: 'Adjustments can only be added when payroll run is in draft status' });
+    }
+
+    const employeeResult = await query(
+      'SELECT id FROM employees WHERE id = $1 AND tenant_id = $2',
+      [employee_id, tenantId]
+    );
+
+    if (employeeResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Employee not found for this tenant' });
+    }
+
+    const adjustmentResult = await query(
+      `INSERT INTO payroll_run_adjustments (
+        tenant_id, payroll_run_id, employee_id, component_name, amount, is_taxable, created_by, notes
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *`,
+      [tenantId, id, employee_id, component_name, amount, is_taxable, req.user.id, notes || null]
+    );
+
+    await audit({
+      actorId: req.user.id,
+      action: 'payroll_adjustment_created',
+      entityType: 'payroll_run_adjustment',
+      entityId: adjustmentResult.rows[0].id,
+      details: { payroll_run_id: id, employee_id, component_name, amount, is_taxable },
+    });
+
+    res.status(201).json(adjustmentResult.rows[0]);
+  } catch (error) {
+    console.error('Error creating payroll adjustment:', error);
+    res.status(500).json({ error: error.message || 'Failed to create payroll adjustment' });
+  }
+});
+
+router.put('/adjustments/:adjustmentId', authenticateToken, requireCapability(CAPABILITIES.PAYROLL_RUN), async (req, res) => {
+  try {
+    const tenantId = await getTenantIdForUser(req.user.id);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No organization found' });
+    }
+
+    const { adjustmentId } = req.params;
+    const { component_name, amount, is_taxable, notes } = req.body;
+
+    const adjustmentResult = await query(
+      `SELECT pra.*, pr.status
+       FROM payroll_run_adjustments pra
+       JOIN payroll_runs pr ON pr.id = pra.payroll_run_id
+       WHERE pra.id = $1 AND pra.tenant_id = $2`,
+      [adjustmentId, tenantId]
+    );
+
+    if (adjustmentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Adjustment not found' });
+    }
+
+    if (adjustmentResult.rows[0].status !== 'draft') {
+      return res.status(400).json({ error: 'Adjustments can only be edited when payroll run is in draft status' });
+    }
+
+    const fields = [];
+    const values = [];
+    let index = 1;
+
+    if (component_name !== undefined) {
+      fields.push(`component_name = $${index++}`);
+      values.push(component_name);
+    }
+
+    if (amount !== undefined) {
+      fields.push(`amount = $${index++}`);
+      values.push(amount);
+    }
+
+    if (is_taxable !== undefined) {
+      fields.push(`is_taxable = $${index++}`);
+      values.push(is_taxable);
+    }
+
+    if (notes !== undefined) {
+      fields.push(`notes = $${index++}`);
+      values.push(notes);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No fields provided for update' });
+    }
+
+    values.push(adjustmentId);
+
+    const updatedResult = await query(
+      `UPDATE payroll_run_adjustments
+       SET ${fields.join(', ')}, updated_at = now()
+       WHERE id = $${index}
+       RETURNING *`,
+      values
+    );
+
+    await audit({
+      actorId: req.user.id,
+      action: 'payroll_adjustment_updated',
+      entityType: 'payroll_run_adjustment',
+      entityId: adjustmentId,
+      details: { fields: Object.keys(req.body || {}) },
+    });
+
+    res.json(updatedResult.rows[0]);
+  } catch (error) {
+    console.error('Error updating payroll adjustment:', error);
+    res.status(500).json({ error: error.message || 'Failed to update payroll adjustment' });
+  }
+});
+
+router.delete('/adjustments/:adjustmentId', authenticateToken, requireCapability(CAPABILITIES.PAYROLL_RUN), async (req, res) => {
+  try {
+    const tenantId = await getTenantIdForUser(req.user.id);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No organization found' });
+    }
+
+    const { adjustmentId } = req.params;
+
+    const adjustmentResult = await query(
+      `SELECT pra.id, pra.payroll_run_id, pr.status
+       FROM payroll_run_adjustments pra
+       JOIN payroll_runs pr ON pr.id = pra.payroll_run_id
+       WHERE pra.id = $1 AND pra.tenant_id = $2`,
+      [adjustmentId, tenantId]
+    );
+
+    if (adjustmentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Adjustment not found' });
+    }
+
+    if (adjustmentResult.rows[0].status !== 'draft') {
+      return res.status(400).json({ error: 'Adjustments can only be deleted when payroll run is in draft status' });
+    }
+
+    await query(
+      'DELETE FROM payroll_run_adjustments WHERE id = $1',
+      [adjustmentId]
+    );
+
+    await audit({
+      actorId: req.user.id,
+      action: 'payroll_adjustment_deleted',
+      entityType: 'payroll_run_adjustment',
+      entityId: adjustmentId,
+      details: { payroll_run_id: adjustmentResult.rows[0].payroll_run_id },
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting payroll adjustment:', error);
+    res.status(500).json({ error: error.message || 'Failed to delete payroll adjustment' });
+  }
+});
+
 // Create payroll run
 router.post('/runs', authenticateToken, requireCapability(CAPABILITIES.PAYROLL_RUN), async (req, res) => {
   try {
@@ -210,11 +464,7 @@ router.post('/runs', authenticateToken, requireCapability(CAPABILITIES.PAYROLL_R
       return res.status(400).json({ error: 'pay_period_start, pay_period_end, and pay_date are required' });
     }
 
-    const tenantResult = await query(
-      'SELECT tenant_id FROM profiles WHERE id = $1',
-      [req.user.id]
-    );
-    const tenantId = tenantResult.rows[0]?.tenant_id;
+    const tenantId = await getTenantIdForUser(req.user.id);
 
     if (!tenantId) {
       return res.status(403).json({ error: 'No organization found' });
@@ -292,6 +542,21 @@ router.post('/runs/:id/process', authenticateToken, requireCapability(CAPABILITI
       [run.tenant_id, run.pay_period_start, run.pay_period_end]
     );
 
+    const adjustmentsResult = await query(
+      `SELECT employee_id, amount, is_taxable
+       FROM payroll_run_adjustments
+       WHERE payroll_run_id = $1 AND tenant_id = $2`,
+      [id, run.tenant_id]
+    );
+
+    const adjustmentsByEmployee = adjustmentsResult.rows.reduce((acc, adjustment) => {
+      if (!acc[adjustment.employee_id]) {
+        acc[adjustment.employee_id] = [];
+      }
+      acc[adjustment.employee_id].push(adjustment);
+      return acc;
+    }, {});
+
     // Process each employee (simplified - would need actual rate calculation)
     let totalAmount = 0;
     let totalEmployees = 0;
@@ -300,17 +565,53 @@ router.post('/runs/:id/process', authenticateToken, requireCapability(CAPABILITI
       // Get employee rate (placeholder - would come from employee compensation table)
       const rateCents = 5000 * 100; // $50/hour placeholder
       const hours = parseFloat(ts.total_hours) || 0;
-      const grossPayCents = Math.round(hours * rateCents);
-      const deductionsCents = Math.round(grossPayCents * 0.2); // 20% placeholder
-      const netPayCents = grossPayCents - deductionsCents;
+      const baseGrossPayCents = Math.round(hours * rateCents);
+
+      const adjustments = adjustmentsByEmployee[ts.employee_id] || [];
+      let taxableAdjustmentCents = 0;
+      let nonTaxableAdjustmentCents = 0;
+      for (const adj of adjustments) {
+        const adjCents = Math.round(Number(adj.amount || 0) * 100);
+        if (adj.is_taxable) {
+          taxableAdjustmentCents += adjCents;
+        } else {
+          nonTaxableAdjustmentCents += adjCents;
+        }
+      }
+
+      const grossPayCents = baseGrossPayCents + taxableAdjustmentCents;
+
+      let tdsCents = 0;
+      try {
+        const financialYear = getFinancialYearForDate(run.pay_date);
+        const tdsResult = await calculateMonthlyTDS(ts.employee_id, run.tenant_id, financialYear);
+        tdsCents = Math.round(tdsResult.monthlyTds * 100);
+      } catch (tdsError) {
+        console.warn('Failed to calculate TDS for employee', ts.employee_id, tdsError);
+      }
+
+      const otherDeductionsCents = Math.round(grossPayCents * 0.1); // placeholder for other deductions
+      const totalDeductionsCents = tdsCents + otherDeductionsCents;
+      const netPayCents = grossPayCents - totalDeductionsCents + nonTaxableAdjustmentCents;
 
       await query(
         `INSERT INTO payroll_run_employees (
           payroll_run_id, employee_id, hours, rate_cents,
-          gross_pay_cents, deductions_cents, net_pay_cents, status
+          gross_pay_cents, deductions_cents, net_pay_cents, status,
+          metadata
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [id, ts.employee_id, hours, rateCents, grossPayCents, deductionsCents, netPayCents, 'processed']
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          id,
+          ts.employee_id,
+          hours,
+          rateCents,
+          grossPayCents,
+          totalDeductionsCents,
+          netPayCents,
+          'processed',
+          JSON.stringify({ tds_cents: tdsCents }),
+        ]
       );
 
       totalAmount += netPayCents;
@@ -404,11 +705,7 @@ router.get('/export/timesheets', authenticateToken, requireCapability(CAPABILITI
       return res.status(400).json({ error: 'pay_period_start and pay_period_end are required' });
     }
 
-    const tenantResult = await query(
-      'SELECT tenant_id FROM profiles WHERE id = $1',
-      [req.user.id]
-    );
-    const tenantId = tenantResult.rows[0]?.tenant_id;
+    const tenantId = await getTenantIdForUser(req.user.id);
 
     if (!tenantId) {
       return res.status(403).json({ error: 'No organization found' });
@@ -452,11 +749,7 @@ router.get('/export/timesheets', authenticateToken, requireCapability(CAPABILITI
 // Get exceptions report
 router.get('/exceptions', authenticateToken, requireCapability(CAPABILITIES.PAYROLL_RUN), async (req, res) => {
   try {
-    const tenantResult = await query(
-      'SELECT tenant_id FROM profiles WHERE id = $1',
-      [req.user.id]
-    );
-    const tenantId = tenantResult.rows[0]?.tenant_id;
+    const tenantId = await getTenantIdForUser(req.user.id);
 
     if (!tenantId) {
       return res.status(403).json({ error: 'No organization found' });
@@ -498,11 +791,7 @@ router.get('/exceptions', authenticateToken, requireCapability(CAPABILITIES.PAYR
 // Get payroll totals (CEO read-only)
 router.get('/totals', authenticateToken, requireCapability(CAPABILITIES.PAYROLL_READ_TOTALS), async (req, res) => {
   try {
-    const tenantResult = await query(
-      'SELECT tenant_id FROM profiles WHERE id = $1',
-      [req.user.id]
-    );
-    const tenantId = tenantResult.rows[0]?.tenant_id;
+    const tenantId = await getTenantIdForUser(req.user.id);
 
     if (!tenantId) {
       return res.status(403).json({ error: 'No organization found' });

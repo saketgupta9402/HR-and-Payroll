@@ -48,6 +48,7 @@ import ProjectCalendar from "./pages/ProjectCalendar";
 import HolidayManagement from "./pages/HolidayManagement";
 import EmployeeStats from "./pages/EmployeeStats";
 import Payroll from "./pages/Payroll";
+import PayrollAdjustments from "./pages/PayrollAdjustments";
 import BackgroundChecks from "./pages/BackgroundChecks";
 import Terminations from "./pages/Terminations";
 import DocumentInbox from "./pages/DocumentInbox";
@@ -58,6 +59,9 @@ import OffboardingPolicies from "./pages/OffboardingPolicies";
 import OnboardingEnhanced from "./pages/OnboardingEnhanced";
 import PoliciesManagement from "./pages/PoliciesManagement";
 import PromotionCycles from "./pages/PromotionCycles";
+import TaxDeclaration from "./pages/TaxDeclaration";
+import TaxDeclarationReview from "./pages/TaxDeclarationReview";
+import Form16 from "./pages/Form16";
 
 const queryClient = new QueryClient();
 
@@ -118,6 +122,10 @@ const App = () => (
             <Route path="/attendance/upload" element={<ProtectedRoute allowedRoles={['hr', 'director', 'ceo', 'admin', 'accountant']}><AttendanceUpload /></ProtectedRoute>} />
             <Route path="/attendance/history" element={<ProtectedRoute allowedRoles={['hr', 'director', 'ceo', 'admin', 'accountant']}><AttendanceUploadHistory /></ProtectedRoute>} />
             <Route path="/payroll" element={<ProtectedRoute allowedRoles={['accountant', 'ceo', 'admin']}><Payroll /></ProtectedRoute>} />
+            <Route path="/tax/declaration" element={<ProtectedRoute><TaxDeclaration /></ProtectedRoute>} />
+            <Route path="/tax/declarations/review" element={<ProtectedRoute allowedRoles={['hr', 'director', 'ceo', 'admin', 'accountant']}><TaxDeclarationReview /></ProtectedRoute>} />
+            <Route path="/reports/form16" element={<ProtectedRoute><Form16 /></ProtectedRoute>} />
+            <Route path="/payroll/adjustments" element={<ProtectedRoute allowedRoles={['accountant', 'ceo', 'admin']}><PayrollAdjustments /></ProtectedRoute>} />
             <Route path="/background-checks" element={<ProtectedRoute allowedRoles={['hr', 'director', 'ceo', 'admin']}><BackgroundChecks /></ProtectedRoute>} />
             <Route path="/terminations" element={<ProtectedRoute allowedRoles={['hr', 'director', 'ceo', 'admin']}><Terminations /></ProtectedRoute>} />
             <Route path="/documents" element={<ProtectedRoute><DocumentInbox /></ProtectedRoute>} />

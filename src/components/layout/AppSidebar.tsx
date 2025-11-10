@@ -22,6 +22,7 @@ import {
   Inbox,
   LogOut,
   ClipboardList,
+  Receipt,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import {
@@ -63,6 +64,8 @@ const hrItems = [
   { title: "Project Calendar", url: "/calendar", icon: CalendarClock, showBadge: false },
   { title: "Holiday Management", url: "/holidays", icon: Calendar, showBadge: false },
   { title: "Leave Policies", url: "/policies", icon: FileText, showBadge: false },
+  { title: "Tax Declarations", url: "/tax/declarations/review", icon: Receipt, showBadge: false },
+  { title: "Form 16", url: "/reports/form16", icon: Receipt, showBadge: false },
   { title: "Offboarding Policies", url: "/offboarding/policies", icon: ClipboardList, showBadge: false },
   { title: "Analytics", url: "/analytics", icon: BarChart3, showBadge: false },
   { title: "Employee Stats", url: "/employee-stats", icon: Users, showBadge: false },
@@ -81,6 +84,8 @@ const managerItems = [
   { title: "Leave Requests", url: "/leaves", icon: Calendar, showBadge: true },
   { title: "Project Calendar", url: "/calendar", icon: CalendarClock, showBadge: false },
   { title: "Appraisals", url: "/appraisals", icon: Award, showBadge: false },
+  { title: "Tax Declaration", url: "/tax/declaration", icon: Receipt, showBadge: false },
+  { title: "Form 16", url: "/reports/form16", icon: Receipt, showBadge: false },
   { title: "AI Assistant", url: "/ai-assistant", icon: Bot, showBadge: false },
   { title: "Payroll", url: "/payroll", icon: DollarSign, showBadge: false, isExternal: true, sso: true },
 ];
@@ -95,6 +100,8 @@ const employeeItems = [
   { title: "Project Calendar", url: "/calendar", icon: CalendarClock, showBadge: false },
   { title: "Org Chart", url: "/org-chart", icon: Network, showBadge: false },
   { title: "My Appraisal", url: "/my-appraisal", icon: Award, showBadge: false },
+  { title: "Tax Declaration", url: "/tax/declaration", icon: Receipt, showBadge: false },
+  { title: "Form 16", url: "/reports/form16", icon: Receipt, showBadge: false },
   { title: "AI Assistant", url: "/ai-assistant", icon: Bot, showBadge: false },
   { title: "Payroll", url: "/payroll", icon: DollarSign, showBadge: false, isExternal: true, sso: true },
 ];
@@ -192,6 +199,8 @@ export function AppSidebar() {
         return [
           { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, showBadge: false },
           { title: "Payroll", url: "/payroll", icon: DollarSign, showBadge: false, isExternal: true, sso: true },
+          { title: "Tax Declarations", url: "/tax/declarations/review", icon: Receipt, showBadge: false },
+          { title: "Form 16", url: "/reports/form16", icon: Receipt, showBadge: false },
           { title: "Attendance Upload", url: "/attendance/upload", icon: Upload, showBadge: false },
           { title: "Upload History", url: "/attendance/history", icon: History, showBadge: false },
         ];

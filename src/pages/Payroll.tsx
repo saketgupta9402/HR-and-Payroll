@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
-import { Plus, Calendar, Download, AlertCircle, DollarSign } from "lucide-react";
+import { Plus, Calendar, Download, AlertCircle, DollarSign, SlidersHorizontal } from "lucide-react";
 import { api } from "@/lib/api";
 import { format } from "date-fns";
+import { useNavigate } from "react-router-dom";
 
 interface PayrollRun {
   id: string;
@@ -21,6 +22,7 @@ interface PayrollRun {
 
 export default function Payroll() {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [runs, setRuns] = useState<PayrollRun[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -93,10 +95,16 @@ export default function Payroll() {
             <h1 className="text-3xl font-bold">Payroll</h1>
             <p className="text-muted-foreground">Manage payroll runs and exports</p>
           </div>
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            New Payroll Run
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => navigate("/payroll/adjustments")}>
+              <SlidersHorizontal className="mr-2 h-4 w-4" />
+              Adjustments
+            </Button>
+            <Button>
+              <Plus className="mr-2 h-4 w-4" />
+              New Payroll Run
+            </Button>
+          </div>
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
@@ -169,7 +177,10 @@ export default function Payroll() {
                           Process
                         </Button>
                       )}
-                      <Button size="sm" variant="outline">
+                      <Button size="sm" variant="outline" onClick={() => navigate(`/payroll/adjustments?runId=${run.id}`)}>
+                        Adjustments
+                      </Button>
+                      <Button size="sm" variant="ghost">
                         <Download className="h-4 w-4" />
                       </Button>
                     </div>

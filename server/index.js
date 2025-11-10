@@ -42,6 +42,8 @@ import rehireRoutes from './routes/rehire.js';
 import policiesRoutes from './routes/policies.js';
 import usersRoutes from './routes/users.js';
 import payrollSsoRoutes from './routes/payroll-sso.js';
+import taxDeclarationsRoutes from './routes/tax-declarations.js';
+import reportsRoutes from './routes/reports.js';
 import { setTenantContext } from './middleware/tenant.js';
 import { scheduleHolidayNotifications, scheduleNotificationRules } from './services/cron.js';
 import { scheduleOffboardingJobs } from './services/offboarding-cron.js';
@@ -119,6 +121,8 @@ app.use('/api/users', usersRoutes);
 app.use('/api/promotion', authenticateToken, setTenantContext, promotionsRoutes);
 // Payroll SSO integration (separate from payroll routes)
 app.use('/api/payroll/sso', payrollSsoRoutes);
+app.use('/api/tax/declarations', taxDeclarationsRoutes);
+app.use('/api/reports', authenticateToken, reportsRoutes);
 
 // Tenant info endpoint for payroll service compatibility
 app.get('/api/tenant', authenticateToken, async (req, res) => {
