@@ -198,7 +198,7 @@ export const AddEmployeeDialog = ({ open, onOpenChange }: AddEmployeeDialogProps
                 onValueChange={(value: any) => setFormData({ ...formData, status: value })}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="active">Active</SelectItem>

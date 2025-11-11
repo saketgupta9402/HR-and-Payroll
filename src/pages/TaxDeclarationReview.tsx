@@ -50,7 +50,7 @@ const financialYearOptions = () => {
 export default function TaxDeclarationReview() {
   const { toast } = useToast();
   const [financialYear, setFinancialYear] = useState<string>(getCurrentFinancialYear());
-  const [statusFilter, setStatusFilter] = useState<string>("submitted");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [declarations, setDeclarations] = useState<DeclarationSummary[]>([]);
   const [items, setItems] = useState<DeclarationItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);

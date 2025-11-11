@@ -50,10 +50,20 @@ export default function AddEmployee() {
     try {
       const employees = await api.getEmployees();
       const managersList = employees
-        .filter((emp: any) => emp.status === 'active')
+        .filter((emp: any) => {
+          // Robust filter:
+          // 1. Must be active
+          // 2. Must have an id (not null, not undefined)
+          // 3. The id, when converted to a string, must not be empty.
+          return emp.status === 'active' &&
+                 emp.id !== null &&
+                 emp.id !== undefined &&
+                 String(emp.id).trim() !== '';
+        })
         .map((emp: any) => ({
           id: emp.id,
-          name: `${emp.profiles?.first_name || ''} ${emp.profiles?.last_name || ''}`.trim(),
+          // Add fallback name in case profile is empty
+          name: `${emp.profiles?.first_name || ''} ${emp.profiles?.last_name || ''}`.trim() || String(emp.id),
         }));
       setManagers(managersList);
     } catch (error) {
@@ -225,7 +235,7 @@ export default function AddEmployee() {
                     onValueChange={(value: any) => setFormData({ ...formData, role: value })}
                   >
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue placeholder="Select role" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="employee">Employee</SelectItem>

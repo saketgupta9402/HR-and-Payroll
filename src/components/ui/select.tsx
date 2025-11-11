@@ -201,27 +201,28 @@ const SelectLabel = React.forwardRef<
 ));
 SelectLabel.displayName = SelectPrimitive.Label.displayName;
 
+let emptyValueCounter = 0;
+
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
 >(({ className, children, value, ...props }, ref) => {
+  const fallbackRef = React.useRef<string>();
+
+  if (!fallbackRef.current) {
+    fallbackRef.current = `${EMPTY_VALUE_PREFIX}::item-${++emptyValueCounter}`;
+  }
+
   const normalizedValue =
     value === undefined || value === null
-      ? `${EMPTY_VALUE_PREFIX}::item`
+      ? fallbackRef.current
       : typeof value === "number"
       ? String(value)
       : typeof value === "string"
       ? value.trim() === ""
-        ? `${EMPTY_VALUE_PREFIX}::item`
+        ? fallbackRef.current
         : value
       : String(value);
-
-  if (process.env.NODE_ENV === "development") {
-    console.debug("[SelectItem] value normalization", {
-      raw: value,
-      normalizedValue,
-    });
-  }
 
   if (value === "" || value === " ") {
     console.error("[SelectItem] received explicit empty string value", {

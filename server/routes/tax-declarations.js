@@ -6,6 +6,14 @@ import { audit } from '../utils/auditLog.js';
 
 const router = express.Router();
 
+const safeAudit = async (payload) => {
+  try {
+    await audit(payload);
+  } catch (err) {
+    console.warn('[AUDIT] audit log skipped:', err?.message || err);
+  }
+};
+
 const getTenantIdForUser = async (userId) => {
   const result = await query(
     'SELECT tenant_id FROM profiles WHERE id = $1',
@@ -22,6 +30,52 @@ const getEmployeeIdForUser = async (userId) => {
   return result.rows[0]?.id || null;
 };
 
+const ensureDefaultDefinitions = async (tenantId, financialYear) => {
+  const defaults = [
+    {
+      component_code: 'PAYROLL_SECTION_80C',
+      label: 'Section 80C Investments',
+      section: '80C',
+      section_group: '80C',
+    },
+    {
+      component_code: 'PAYROLL_SECTION_80D',
+      label: 'Section 80D Medical Insurance',
+      section: '80D',
+      section_group: '80D',
+    },
+    {
+      component_code: 'PAYROLL_SECTION_24B',
+      label: 'Home Loan Interest (Section 24B)',
+      section: '24B',
+      section_group: null,
+    },
+    {
+      component_code: 'PAYROLL_HRA',
+      label: 'HRA Exemption',
+      section: 'HRA',
+      section_group: null,
+    },
+    {
+      component_code: 'PAYROLL_OTHER_DEDUCTIONS',
+      label: 'Other Deductions',
+      section: 'Other',
+      section_group: null,
+    },
+  ];
+
+  for (const def of defaults) {
+    await query(
+      `INSERT INTO tax_component_definitions (
+        tenant_id, financial_year, component_code, label, section, section_group, metadata, is_active
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, '{}', true)
+      ON CONFLICT (tenant_id, financial_year, component_code) DO NOTHING`,
+      [tenantId, financialYear, def.component_code, def.label, def.section, def.section_group]
+    );
+  }
+};
+
 router.get('/definitions', authenticateToken, async (req, res) => {
   try {
     const tenantId = await getTenantIdForUser(req.user.id);
@@ -34,7 +88,7 @@ router.get('/definitions', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'financial_year is required' });
     }
 
-    const result = await query(
+    let result = await query(
       `SELECT *
        FROM tax_component_definitions
        WHERE tenant_id = $1
@@ -43,6 +97,19 @@ router.get('/definitions', authenticateToken, async (req, res) => {
        ORDER BY section, label`,
       [tenantId, financial_year]
     );
+
+    if (result.rows.length === 0) {
+      await ensureDefaultDefinitions(tenantId, financial_year);
+      result = await query(
+        `SELECT *
+         FROM tax_component_definitions
+         WHERE tenant_id = $1
+           AND financial_year = $2
+           AND is_active = true
+         ORDER BY section, label`,
+        [tenantId, financial_year]
+      );
+    }
 
     res.json(result.rows);
   } catch (error) {
@@ -192,7 +259,7 @@ router.post('/', authenticateToken, requireCapability(CAPABILITIES.TAX_DECLARATI
       );
     }
 
-    await audit({
+    await safeAudit({
       actorId: req.user.id,
       action: 'tax_declaration_saved',
       entityType: 'tax_declaration',
@@ -333,7 +400,7 @@ router.post('/:id/review', authenticateToken, requireCapability(CAPABILITIES.TAX
       );
     }
 
-    await audit({
+    await safeAudit({
       actorId: req.user.id,
       action: 'tax_declaration_reviewed',
       entityType: 'tax_declaration',
