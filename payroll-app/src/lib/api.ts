@@ -103,6 +103,20 @@ const client = {
     return response.json();
   },
 
+  upload: async <T>(endpoint: string, formData: FormData): Promise<T> => {
+    const response = await fetch(resolveEndpoint(endpoint), {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: "API error" }));
+      throw new Error(errorData.error || `API error: ${response.statusText}`);
+    }
+    return response.json();
+  },
+
   patch: async <T>(endpoint: string, body: unknown): Promise<T> => {
     const response = await fetch(resolveEndpoint(endpoint), {
       method: "PATCH",
@@ -129,6 +143,22 @@ export const api = {
   get: client.get,
   post: client.post,
   patch: client.patch,
+  upload: client.upload,
+
+  uploadTaxProof: (
+    componentCode: string,
+    financialYear: string,
+    file: File
+  ): Promise<{ url: string; fileName?: string; size?: number; mimeType?: string }> => {
+    const formData = new FormData();
+    formData.append("component_code", componentCode);
+    formData.append("financial_year", financialYear);
+    formData.append("file", file);
+    return client.upload<{ url: string; fileName?: string; size?: number; mimeType?: string }>(
+      "/api/tax-declarations/proofs",
+      formData
+    );
+  },
 
   // --- Authentication ---
   auth: {

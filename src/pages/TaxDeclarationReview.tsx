@@ -32,6 +32,7 @@ interface DeclarationItem {
   label: string;
   section: string;
   section_group?: string;
+  proof_url?: string | null;
 }
 
 const getCurrentFinancialYear = () => {
@@ -316,7 +317,7 @@ export default function TaxDeclarationReview() {
                     ) : (
                       selectedItems.map((item) => (
                         <div key={item.id} className="border rounded-lg p-4 space-y-2">
-                          <div className="flex items-center justify-between gap-4">
+                          <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                             <div>
                               <h3 className="text-base font-semibold">{item.label}</h3>
                               <p className="text-xs text-muted-foreground">
@@ -326,6 +327,20 @@ export default function TaxDeclarationReview() {
                               <p className="text-sm text-muted-foreground mt-1">
                                 Declared: ₹{Number(item.declared_amount || 0).toLocaleString()}
                               </p>
+                              {item.proof_url ? (
+                                <a
+                                  href={item.proof_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs text-primary mt-2 inline-flex items-center gap-1 underline underline-offset-2"
+                                >
+                                  View proof
+                                </a>
+                              ) : (
+                                <p className="text-xs text-muted-foreground mt-2">
+                                  No proof uploaded.
+                                </p>
+                              )}
                             </div>
                             {selectedDeclaration.status !== "approved" && (
                               <Input

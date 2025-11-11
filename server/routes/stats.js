@@ -57,6 +57,7 @@ router.get('/pending-counts', authenticateToken, async (req, res) => {
 
     let timesheetsCount = 0;
     let leavesCount = 0;
+    let taxDeclarationsCount = 0;
 
     if (['manager', 'hr', 'director', 'ceo', 'admin'].includes(role)) {
       // For managers, count only their team's pending requests
@@ -78,6 +79,14 @@ router.get('/pending-counts', authenticateToken, async (req, res) => {
           [tenantId, employeeId]
         );
         leavesCount = parseInt(leaveResult.rows[0]?.count || '0');
+
+        const taxResult = await query(
+          `SELECT COUNT(*) as count FROM tax_declarations td
+           JOIN employees e ON e.id = td.employee_id
+           WHERE td.status = 'submitted' AND td.tenant_id = $1 AND e.reporting_manager_id = $2`,
+          [tenantId, employeeId]
+        );
+        taxDeclarationsCount = parseInt(taxResult.rows[0]?.count || '0');
       } else {
         // For HR/CEO/Admin, count all pending requests
         const timesheetResult = await query(
@@ -91,12 +100,19 @@ router.get('/pending-counts', authenticateToken, async (req, res) => {
           ['pending', tenantId]
         );
         leavesCount = parseInt(leaveResult.rows[0]?.count || '0');
+
+        const taxResult = await query(
+          'SELECT COUNT(*) as count FROM tax_declarations WHERE status = $1 AND tenant_id = $2',
+          ['submitted', tenantId]
+        );
+        taxDeclarationsCount = parseInt(taxResult.rows[0]?.count || '0');
       }
     }
 
     res.json({
       timesheets: timesheetsCount,
       leaves: leavesCount,
+      taxDeclarations: taxDeclarationsCount,
     });
   } catch (error) {
     console.error('Error fetching pending counts:', error);

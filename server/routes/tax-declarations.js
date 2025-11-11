@@ -354,6 +354,34 @@ router.post('/:id/review', authenticateToken, requireCapability(CAPABILITIES.TAX
     }
 
     const declaration = declarationResult.rows[0];
+
+    if (status === 'approved') {
+      const proofCheckResult = await client(
+        `SELECT 
+          tdi.declared_amount,
+          tdi.proof_url,
+          tcd.label
+         FROM tax_declaration_items tdi
+         JOIN tax_component_definitions tcd ON tcd.id = tdi.component_id
+         WHERE tdi.declaration_id = $1`,
+        [id]
+      );
+
+      const missingProof = proofCheckResult.rows.filter((row) => {
+        const amount = Number(row.declared_amount || 0);
+        const proof = (row.proof_url || '').trim();
+        return amount > 0 && proof.length === 0;
+      });
+
+      if (missingProof.length > 0) {
+        const missingLabels = missingProof.map((row) => row.label || "Component");
+        return res.status(400).json({
+          error: `Proof is required for: ${missingLabels.join(', ')}`,
+          missing_components: missingLabels,
+        });
+      }
+    }
+
     const tenantId = await getTenantIdForUser(req.user.id);
 
     if (!tenantId || tenantId !== declaration.tenant_id) {

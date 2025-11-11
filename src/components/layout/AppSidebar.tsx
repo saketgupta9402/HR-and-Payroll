@@ -64,7 +64,7 @@ const hrItems = [
   { title: "Project Calendar", url: "/calendar", icon: CalendarClock, showBadge: false },
   { title: "Holiday Management", url: "/holidays", icon: Calendar, showBadge: false },
   { title: "Leave Policies", url: "/policies", icon: FileText, showBadge: false },
-  { title: "Tax Declarations", url: "/tax/declarations/review", icon: Receipt, showBadge: false },
+  { title: "Tax Declarations", url: "/tax/declarations/review", icon: Receipt, showBadge: true },
   { title: "Form 16", url: "/reports/form16", icon: Receipt, showBadge: false },
   { title: "Offboarding Policies", url: "/offboarding/policies", icon: ClipboardList, showBadge: false },
   { title: "Analytics", url: "/analytics", icon: BarChart3, showBadge: false },
@@ -109,9 +109,14 @@ const employeeItems = [
 export function AppSidebar() {
   const { user, userRole } = useAuth();
   const { toast } = useToast();
-  const [pendingCounts, setPendingCounts] = useState<{ timesheets: number; leaves: number }>({
+  const [pendingCounts, setPendingCounts] = useState<{
+    timesheets: number;
+    leaves: number;
+    taxDeclarations: number;
+  }>({
     timesheets: 0,
     leaves: 0,
+    taxDeclarations: 0,
   });
   const [organization, setOrganization] = useState<{ name: string; logo_url: string | null } | null>(null);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
@@ -179,6 +184,7 @@ export function AppSidebar() {
       setPendingCounts({
         timesheets: counts.timesheets || 0,
         leaves: counts.leaves || 0,
+        taxDeclarations: counts.taxDeclarations || 0,
       });
     } catch (error) {
       console.error('Error fetching pending counts:', error);
@@ -199,7 +205,7 @@ export function AppSidebar() {
         return [
           { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard, showBadge: false },
           { title: "Payroll", url: "/payroll", icon: DollarSign, showBadge: false, isExternal: true, sso: true },
-          { title: "Tax Declarations", url: "/tax/declarations/review", icon: Receipt, showBadge: false },
+          { title: "Tax Declarations", url: "/tax/declarations/review", icon: Receipt, showBadge: true },
           { title: "Form 16", url: "/reports/form16", icon: Receipt, showBadge: false },
           { title: "Attendance Upload", url: "/attendance/upload", icon: Upload, showBadge: false },
           { title: "Upload History", url: "/attendance/history", icon: History, showBadge: false },
@@ -225,6 +231,7 @@ export function AppSidebar() {
   const getBadgeCount = (url: string) => {
     if (url === '/timesheet-approvals') return pendingCounts.timesheets;
     if (url === '/leaves') return pendingCounts.leaves;
+    if (url === '/tax/declarations/review') return pendingCounts.taxDeclarations;
     return 0;
   };
 

@@ -2,8 +2,69 @@ import { Router, Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { query } from "../db.js";
 import PDFDocument from "pdfkit";
+import multer from "multer";
+import fs from "fs";
+import path from "path";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret";
+const PROOFS_DIRECTORY =
+  process.env.PAYROLL_PROOFS_DIR || path.resolve(process.cwd(), "uploads", "tax-proofs");
+const PROOFS_BASE_URL = process.env.PAYROLL_PROOFS_BASE_URL || "/tax-proofs";
+fs.mkdirSync(PROOFS_DIRECTORY, { recursive: true });
+
+const proofStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, PROOFS_DIRECTORY),
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    const sanitized = file.originalname.replace(/\s+/g, "_");
+    cb(null, `${uniqueSuffix}-${sanitized}`);
+  },
+});
+
+const proofUpload = multer({
+  storage: proofStorage,
+  limits: {
+    fileSize: Number(process.env.PAYROLL_PROOF_MAX_SIZE || 5 * 1024 * 1024), // default 5MB
+  },
+});
+
+const TAX_COMPONENT_MAP = [
+  {
+    key: "section80C",
+    code: "PAYROLL_SECTION_80C",
+    label: "Section 80C Investments",
+    section: "80C",
+    sectionGroup: "80C",
+  },
+  {
+    key: "section80D",
+    code: "PAYROLL_SECTION_80D",
+    label: "Section 80D Medical Insurance",
+    section: "80D",
+    sectionGroup: "80D",
+  },
+  {
+    key: "homeLoanInterest",
+    code: "PAYROLL_SECTION_24B",
+    label: "Home Loan Interest (Section 24B)",
+    section: "24B",
+    sectionGroup: null,
+  },
+  {
+    key: "hra",
+    code: "PAYROLL_HRA",
+    label: "HRA Exemption",
+    section: "HRA",
+    sectionGroup: null,
+  },
+  {
+    key: "otherDeductions",
+    code: "PAYROLL_OTHER_DEDUCTIONS",
+    label: "Other Deductions",
+    section: "Other",
+    sectionGroup: null,
+  },
+] as const;
 
 export const appRouter = Router();
 appRouter.get("/test", (req, res) => {
@@ -1358,6 +1419,44 @@ appRouter.get("/payslips/:payslipId/pdf", requireAuth, async (req, res) => {
   }
 });
 
+appRouter.post(
+  "/tax-declarations/proofs",
+  requireAuth,
+  proofUpload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "File is required" });
+      }
+
+      const { component_code: componentCode, financial_year: financialYear } = req.body;
+
+      if (!componentCode) {
+        return res.status(400).json({ error: "component_code is required" });
+      }
+
+      if (!financialYear) {
+        return res.status(400).json({ error: "financial_year is required" });
+      }
+
+      const basePath = PROOFS_BASE_URL.startsWith("http")
+        ? PROOFS_BASE_URL
+        : `${req.protocol}://${req.get("host")}${PROOFS_BASE_URL}`;
+      const publicUrl = `${basePath.replace(/\/+$/, "")}/${req.file.filename}`;
+
+      res.json({
+        url: publicUrl,
+        fileName: req.file.originalname,
+        size: req.file.size,
+        mimeType: req.file.mimetype,
+      });
+    } catch (error: any) {
+      console.error("Error uploading tax declaration proof:", error);
+      res.status(500).json({ error: error.message || "Failed to upload proof" });
+    }
+  }
+);
+
 appRouter.get("/tax-declarations", requireAuth, async (req, res) => {
   try {
     const tenantId = (req as any).tenantId as string;
@@ -1421,6 +1520,9 @@ appRouter.post("/tax-declarations", requireAuth, async (req, res) => {
     const tenantId = (req as any).tenantId as string;
     const email = (req as any).userEmail as string;
     const { financial_year, declaration_data, chosen_regime: bodyRegime } = req.body;
+    const statusRaw =
+      typeof req.body.status === "string" ? req.body.status.toLowerCase() : "draft";
+    const statusValue = statusRaw === "submitted" ? "submitted" : "draft";
 
     if (!financial_year || !declaration_data) {
       return res.status(400).json({ error: "Missing financial_year or declaration_data" });
@@ -1463,6 +1565,8 @@ appRouter.post("/tax-declarations", requireAuth, async (req, res) => {
       otherDeductions: Number(declaration_data.otherDeductions) || 0,
     };
 
+    const rawItems = Array.isArray(req.body.items) ? req.body.items : [];
+
     let result;
 
     if (existingColumns.includes('declaration_data')) {
@@ -1481,20 +1585,20 @@ appRouter.post("/tax-declarations", requireAuth, async (req, res) => {
         placeholders.push(`$${index++}`);
       }
 
-      if (existingColumns.includes('status')) {
-        columns.push('status');
-        values.push('submitted');
+      if (existingColumns.includes("status")) {
+        columns.push("status");
+        values.push(statusValue);
         placeholders.push(`$${index++}`);
       }
 
-      if (existingColumns.includes('submitted_at')) {
-        columns.push('submitted_at');
-        values.push(nowIso);
+      if (existingColumns.includes("submitted_at")) {
+        columns.push("submitted_at");
+        values.push(statusValue === "submitted" ? nowIso : null);
         placeholders.push(`$${index++}`);
       }
 
-      if (existingColumns.includes('updated_at')) {
-        columns.push('updated_at');
+      if (existingColumns.includes("updated_at")) {
+        columns.push("updated_at");
         values.push(nowIso);
         placeholders.push(`$${index++}`);
       }
@@ -1506,39 +1610,20 @@ appRouter.post("/tax-declarations", requireAuth, async (req, res) => {
         DO UPDATE SET
           ${columns
             .slice(3)
-            .map((col, idx) => `${col} = EXCLUDED.${col}`)
+            .map((col) =>
+              col === "submitted_at"
+                ? `${col} = COALESCE(EXCLUDED.${col}, tax_declarations.${col})`
+                : `${col} = EXCLUDED.${col}`
+            )
             .join(', ')}
         RETURNING *
       `;
 
       result = await query(insertQuery, values);
     } else {
-      const normalizedDeclaration = {
-        section_80c: structuredData.section80C || 0,
-        section_80d: structuredData.section80D || 0,
-        section_24b: structuredData.homeLoanInterest || 0,
-        section_80g: 0,
-        section_80e: 0,
-        other_deductions: structuredData.otherDeductions || 0,
-        hra: structuredData.hra || 0,
-      };
-
-      // For legacy schemas without dedicated columns, fold HRA into other deductions
-      if (existingColumns.includes('other_deductions')) {
-        normalizedDeclaration.other_deductions += normalizedDeclaration.hra;
-      }
-
-      const totalDeductions =
-        (existingColumns.includes('section_80c') ? normalizedDeclaration.section_80c : 0) +
-        (existingColumns.includes('section_80d') ? normalizedDeclaration.section_80d : 0) +
-        (existingColumns.includes('section_24b') ? normalizedDeclaration.section_24b : 0) +
-        (existingColumns.includes('section_80g') ? normalizedDeclaration.section_80g : 0) +
-        (existingColumns.includes('section_80e') ? normalizedDeclaration.section_80e : 0) +
-        (existingColumns.includes('other_deductions') ? normalizedDeclaration.other_deductions : 0);
-
-      const columns: string[] = ['employee_id', 'tenant_id', 'financial_year'];
+      const columns: string[] = ["employee_id", "tenant_id", "financial_year"];
       const values: any[] = [employeeId, tenantId, financial_year];
-      const placeholders: string[] = ['$1', '$2', '$3'];
+      const placeholders: string[] = ["$1", "$2", "$3"];
       let index = 4;
 
       const addColumn = (column: string, value: any) => {
@@ -1547,28 +1632,41 @@ appRouter.post("/tax-declarations", requireAuth, async (req, res) => {
         placeholders.push(`$${index++}`);
       };
 
-      if (existingColumns.includes('section_80c')) addColumn('section_80c', normalizedDeclaration.section_80c);
-      if (existingColumns.includes('section_80d')) addColumn('section_80d', normalizedDeclaration.section_80d);
-      if (existingColumns.includes('section_24b')) addColumn('section_24b', normalizedDeclaration.section_24b);
-      if (existingColumns.includes('section_80g')) addColumn('section_80g', normalizedDeclaration.section_80g);
-      if (existingColumns.includes('section_80e')) addColumn('section_80e', normalizedDeclaration.section_80e);
-      if (existingColumns.includes('other_deductions')) addColumn('other_deductions', normalizedDeclaration.other_deductions);
-      if (existingColumns.includes('total_deductions')) addColumn('total_deductions', totalDeductions);
-      if (existingColumns.includes('chosen_regime')) addColumn('chosen_regime', chosenRegime);
-      if (existingColumns.includes('submitted_at')) addColumn('submitted_at', nowIso);
-      if (existingColumns.includes('approved_by')) addColumn('approved_by', null);
-      if (existingColumns.includes('approved_at')) addColumn('approved_at', null);
-      if (existingColumns.includes('updated_at')) addColumn('updated_at', nowIso);
+      if (existingColumns.includes("section_80c")) addColumn("section_80c", structuredData.section80C);
+      if (existingColumns.includes("section_80d")) addColumn("section_80d", structuredData.section80D);
+      if (existingColumns.includes("section_24b"))
+        addColumn("section_24b", structuredData.homeLoanInterest);
+      if (existingColumns.includes("hra")) addColumn("hra", structuredData.hra);
+      if (existingColumns.includes("other_deductions"))
+        addColumn("other_deductions", structuredData.otherDeductions + structuredData.hra);
+      if (existingColumns.includes("total_deductions"))
+        addColumn(
+          "total_deductions",
+          structuredData.section80C +
+            structuredData.section80D +
+            structuredData.homeLoanInterest +
+            structuredData.otherDeductions +
+            structuredData.hra
+        );
+      if (existingColumns.includes("chosen_regime")) addColumn("chosen_regime", chosenRegime);
+      if (existingColumns.includes("status")) addColumn("status", statusValue);
+      if (existingColumns.includes("submitted_at"))
+        addColumn("submitted_at", statusValue === "submitted" ? nowIso : null);
+      if (existingColumns.includes("approved_by")) addColumn("approved_by", null);
+      if (existingColumns.includes("approved_at")) addColumn("approved_at", null);
+      if (existingColumns.includes("updated_at")) addColumn("updated_at", nowIso);
 
-      const updateAssignments = columns
-        .slice(3)
-        .map((column) => `${column} = EXCLUDED.${column}`);
+      const updateAssignments = columns.slice(3).map((column) =>
+        column === "submitted_at"
+          ? `${column} = COALESCE(EXCLUDED.${column}, tax_declarations.${column})`
+          : `${column} = EXCLUDED.${column}`
+      );
 
       const insertQuery = `
-        INSERT INTO tax_declarations (${columns.join(', ')})
-        VALUES (${placeholders.join(', ')})
+        INSERT INTO tax_declarations (${columns.join(", ")})
+        VALUES (${placeholders.join(", ")})
         ON CONFLICT (employee_id, financial_year)
-        ${updateAssignments.length > 0 ? `DO UPDATE SET ${updateAssignments.join(', ')}` : 'DO NOTHING'}
+        ${updateAssignments.length > 0 ? `DO UPDATE SET ${updateAssignments.join(", ")}` : "DO NOTHING"}
         RETURNING *
       `;
 
@@ -1585,25 +1683,29 @@ appRouter.post("/tax-declarations", requireAuth, async (req, res) => {
     const declarationRow = result.rows[0];
     const declarationId = declarationRow.id;
 
-    await query(`DELETE FROM tax_declaration_items WHERE declaration_id = $1`, [
-      declarationId,
-    ]);
+    await query(`DELETE FROM tax_declaration_items WHERE declaration_id = $1`, [declarationId]);
 
-    const ensureDefinition = async (
-      componentCode: string,
-      label: string,
-      section: string,
-      sectionGroup?: string
-    ) => {
+    const definitionCache = new Map<string, string>();
+    const ensureDefinition = async (componentCode: string) => {
+      if (definitionCache.has(componentCode)) {
+        return definitionCache.get(componentCode)!;
+      }
+      const component = TAX_COMPONENT_MAP.find((entry) => entry.code === componentCode);
+      if (!component) {
+        throw new Error(`Unknown tax component: ${componentCode}`);
+      }
+
       const existingDef = await query(
         `SELECT id FROM tax_component_definitions 
          WHERE tenant_id = $1 AND financial_year = $2 AND component_code = $3
          LIMIT 1`,
-        [tenantId, financial_year, componentCode]
+        [tenantId, financial_year, component.code]
       );
 
       if (existingDef.rows.length > 0) {
-        return existingDef.rows[0].id as string;
+        const id = existingDef.rows[0].id as string;
+        definitionCache.set(component.code, id);
+        return id;
       }
 
       const insertDef = await query(
@@ -1611,43 +1713,46 @@ appRouter.post("/tax-declarations", requireAuth, async (req, res) => {
           tenant_id, financial_year, component_code, label, section, section_group, metadata, is_active
         ) VALUES ($1, $2, $3, $4, $5, $6, '{}', true)
         RETURNING id`,
-        [tenantId, financial_year, componentCode, label, section, sectionGroup || null]
+        [tenantId, financial_year, component.code, component.label, component.section, component.sectionGroup || null]
       );
 
-      return insertDef.rows[0].id as string;
+      const id = insertDef.rows[0].id as string;
+      definitionCache.set(component.code, id);
+      return id;
     };
 
-    const componentMap: Array<{
-      key: keyof typeof structuredData;
-      code: string;
-      label: string;
-      section: string;
-      sectionGroup?: string;
-    }> = [
-      { key: 'section80C', code: 'PAYROLL_SECTION_80C', label: 'Section 80C Investments', section: '80C', sectionGroup: '80C' },
-      { key: 'section80D', code: 'PAYROLL_SECTION_80D', label: 'Section 80D Medical Insurance', section: '80D', sectionGroup: '80D' },
-      { key: 'homeLoanInterest', code: 'PAYROLL_SECTION_24B', label: 'Home Loan Interest (Section 24B)', section: '24B' },
-      { key: 'hra', code: 'PAYROLL_HRA', label: 'HRA Exemption', section: 'HRA' },
-      { key: 'otherDeductions', code: 'PAYROLL_OTHER_DEDUCTIONS', label: 'Other Deductions', section: 'Other' },
-    ];
+    const normalizedItems =
+      rawItems.length > 0
+        ? rawItems.map((item: any) => ({
+            component_id: String(item.component_id || item.component_code || "").trim(),
+            declared_amount: Number(item.declared_amount ?? 0),
+            proof_url: typeof item.proof_url === "string" ? item.proof_url.trim() : "",
+          }))
+        : TAX_COMPONENT_MAP.map((component) => ({
+            component_id: component.code,
+            declared_amount: Number(structuredData[component.key as keyof typeof structuredData] || 0),
+            proof_url: "",
+          }));
 
-    for (const component of componentMap) {
-      const definitionId = await ensureDefinition(
-        component.code,
-        component.label,
-        component.section,
-        component.sectionGroup
-      );
+    for (const item of normalizedItems) {
+      if (!item.component_id) continue;
+      const component = TAX_COMPONENT_MAP.find((entry) => entry.code === item.component_id);
+      if (!component) continue;
 
-      const amount = Number(structuredData[component.key] || 0);
-      if (amount > 0) {
-        await query(
-          `INSERT INTO tax_declaration_items (
-            declaration_id, component_id, declared_amount, approved_amount
-          ) VALUES ($1, $2, $3, NULL)`,
-          [declarationId, definitionId, amount]
-        );
+      const declaredAmount = Number(item.declared_amount || 0);
+      const proofUrl = (item.proof_url || "").trim();
+
+      if (declaredAmount <= 0 && !proofUrl) {
+        continue;
       }
+
+      const definitionId = await ensureDefinition(component.code);
+      await query(
+        `INSERT INTO tax_declaration_items (
+          declaration_id, component_id, declared_amount, approved_amount, proof_url
+        ) VALUES ($1, $2, $3, NULL, $4)`,
+        [declarationId, definitionId, declaredAmount, proofUrl || null]
+      );
     }
 
     return res.status(201).json({ declaration: declarationRow });

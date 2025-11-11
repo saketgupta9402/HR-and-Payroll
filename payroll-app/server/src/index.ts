@@ -7,6 +7,8 @@ import { appRouter } from "./routes/app.js";
 import ssoRouter from "./routes/sso.js";
 import provisionRouter from "./routes/provision.js";
 import { query } from "./db.js";
+import fs from "fs";
+import path from "path";
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -14,6 +16,11 @@ const port = Number(process.env.PORT || 4000);
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
+
+const proofsDirectory =
+  process.env.PAYROLL_PROOFS_DIR || path.resolve(process.cwd(), "uploads", "tax-proofs");
+fs.mkdirSync(proofsDirectory, { recursive: true });
+app.use("/tax-proofs", express.static(proofsDirectory));
 
 // Ensure required tables exist on startup
 async function ensureRequiredTables() {
