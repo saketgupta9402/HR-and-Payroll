@@ -16,6 +16,8 @@ import ChangePin from "./pages/ChangePin";
 import ForgotPin from "./pages/ForgotPin";
 import ResetPin from "./pages/ResetPin";
 import NotFound from "./pages/NotFound";
+import ApproveReimbursements from "./pages/ApproveReimbursements";
+import { AdminProtectedRoute } from "./components/routing/AdminProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -39,6 +41,14 @@ const App = () => (
           <Route path="/payroll/settings" element={<PayrollSettings />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/employee-portal" element={<EmployeePortal />} />
+          <Route
+            path="/approve-reimbursements"
+            element={
+              <AdminProtectedRoute>
+                <ApproveReimbursements />
+              </AdminProtectedRoute>
+            }
+          />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

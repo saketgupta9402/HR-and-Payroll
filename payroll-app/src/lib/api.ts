@@ -340,5 +340,13 @@ export const api = {
       document.body.removeChild(a);
     },
   },
+
+  reimbursements: {
+    submit: (formData: FormData) => client.upload("/api/v1/reimbursements/submit", formData),
+    myClaims: () => client.get<{ reimbursements: any[] }>("/api/v1/reimbursements/my-claims"),
+    pending: () => client.get<{ reimbursements: any[] }>("/api/v1/reimbursements/pending"),
+    approve: (id: string) => client.post(`/api/v1/reimbursements/${id}/approve`, {}),
+    reject: (id: string) => client.post(`/api/v1/reimbursements/${id}/reject`, {}),
+  },
 };
 

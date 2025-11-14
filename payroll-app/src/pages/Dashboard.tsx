@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Building2, Users, IndianRupee, FileText, LogOut, PlusCircle, Calendar, CheckCircle2, Clock, Key } from "lucide-react";
+import { Building2, Users, IndianRupee, FileText, LogOut, PlusCircle, Calendar, CheckCircle2, Clock, Key, Receipt } from "lucide-react";
 import { toast } from "sonner";
 
 // Define a type for the profile state
@@ -498,7 +498,7 @@ const Dashboard = () => {
         )}
 
         {/* Quick Actions */}
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
           <Card className="shadow-md hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate("/employees")}>
             <CardHeader>
               <CardTitle className="flex items-center">
@@ -542,6 +542,31 @@ const Dashboard = () => {
             <CardContent>
               <Button className="w-full" variant="outline">
                 View Reports
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card
+            className="shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+            onClick={() => navigate("/approve-reimbursements")}
+          >
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <Receipt className="mr-2 h-5 w-5 text-purple-500" />
+                Reimbursements
+              </CardTitle>
+              <CardDescription>Review and approve expense claims</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                className="w-full"
+                variant="secondary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate("/approve-reimbursements");
+                }}
+              >
+                Pending Claims
               </Button>
             </CardContent>
           </Card>

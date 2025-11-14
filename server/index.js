@@ -45,6 +45,7 @@ import policiesRoutes from './routes/policies.js';
 import usersRoutes from './routes/users.js';
 import payrollSsoRoutes from './routes/payroll-sso.js';
 import taxDeclarationsRoutes from './routes/tax-declarations.js';
+import reimbursementRoutes from './routes/reimbursements.js';
 import reportsRoutes from './routes/reports.js';
 import { setTenantContext } from './middleware/tenant.js';
 import { scheduleHolidayNotifications, scheduleNotificationRules } from './services/cron.js';
@@ -74,6 +75,27 @@ const proofsDirectory =
   process.env.TAX_PROOFS_DIR || path.resolve(process.cwd(), 'uploads', 'tax-proofs');
 fs.mkdirSync(proofsDirectory, { recursive: true });
 app.use('/tax-proofs', express.static(proofsDirectory));
+
+const receiptsDirectory =
+  process.env.REIMBURSEMENTS_RECEIPT_DIR || path.resolve(process.cwd(), 'uploads', 'receipts');
+fs.mkdirSync(receiptsDirectory, { recursive: true });
+
+const deriveReceiptsMountPath = () => {
+  const base = process.env.REIMBURSEMENTS_RECEIPT_BASE_URL || '/receipts';
+  if (base.startsWith('http')) {
+    try {
+      const parsed = new URL(base);
+      return parsed.pathname || '/receipts';
+    } catch (err) {
+      console.warn('Invalid REIMBURSEMENTS_RECEIPT_BASE_URL, defaulting to /receipts:', err);
+      return '/receipts';
+    }
+  }
+  return base.startsWith('/') ? base : `/${base}`;
+};
+
+const receiptsMountPath = deriveReceiptsMountPath();
+app.use(receiptsMountPath, express.static(receiptsDirectory));
 
 // Health check
 app.get('/health', (req, res) => {
@@ -129,6 +151,7 @@ app.use('/api/promotion', authenticateToken, setTenantContext, promotionsRoutes)
 // Payroll SSO integration (separate from payroll routes)
 app.use('/api/payroll/sso', payrollSsoRoutes);
 app.use('/api/tax/declarations', taxDeclarationsRoutes);
+app.use('/api/v1/reimbursements', reimbursementRoutes);
 app.use('/api/reports', authenticateToken, reportsRoutes);
 
 // Tenant info endpoint for payroll service compatibility

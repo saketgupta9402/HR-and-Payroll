@@ -13,6 +13,7 @@ import { EmployeeSalaryStructure } from "@/components/employees/EmployeeSalarySt
 import { PayslipsTab } from "@/components/employee-portal/PayslipsTab";
 import { TaxDeclarationsTab } from "@/components/employee-portal/TaxDeclarationsTab";
 import { TaxDocumentsTab } from "@/components/employee-portal/TaxDocumentsTab";
+import { ReimbursementsTab } from "@/components/employee-portal/ReimbursementsTab";
 // Leave and Attendance removed - handled by HR system
 
 const EmployeePortal = () => {
@@ -145,12 +146,13 @@ const EmployeePortal = () => {
           </Card>
         ) : (
           <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="salary">Salary</TabsTrigger>
               <TabsTrigger value="payslips">Payslips</TabsTrigger>
               <TabsTrigger value="declarations">Declarations</TabsTrigger>
               <TabsTrigger value="documents">Documents</TabsTrigger>
+              <TabsTrigger value="reimbursements">Reimbursements</TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview" className="space-y-6">
@@ -211,6 +213,10 @@ const EmployeePortal = () => {
 
             <TabsContent value="documents">
               <TaxDocumentsTab />
+            </TabsContent>
+
+            <TabsContent value="reimbursements">
+              <ReimbursementsTab />
             </TabsContent>
           </Tabs>
         )}

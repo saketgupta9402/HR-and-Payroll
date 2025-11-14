@@ -581,6 +581,18 @@ router.post('/runs/:id/process', authenticateToken, requireCapability(CAPABILITI
 
       const grossPayCents = baseGrossPayCents + taxableAdjustmentCents;
 
+      const reimbursementResult = await query(
+        `SELECT COALESCE(SUM(amount), 0) as total_reimbursements
+         FROM employee_reimbursements
+         WHERE employee_id = $1
+           AND org_id = $2
+           AND status = 'approved'
+           AND payroll_run_id IS NULL`,
+        [ts.employee_id, run.tenant_id]
+      );
+      const reimbursementTotal = Number(reimbursementResult.rows[0]?.total_reimbursements || 0);
+      const reimbursementCents = Math.round(reimbursementTotal * 100);
+
       let tdsCents = 0;
       try {
         const financialYear = getFinancialYearForDate(run.pay_date);
@@ -592,7 +604,7 @@ router.post('/runs/:id/process', authenticateToken, requireCapability(CAPABILITI
 
       const otherDeductionsCents = Math.round(grossPayCents * 0.1); // placeholder for other deductions
       const totalDeductionsCents = tdsCents + otherDeductionsCents;
-      const netPayCents = grossPayCents - totalDeductionsCents + nonTaxableAdjustmentCents;
+      const netPayCents = grossPayCents - totalDeductionsCents + nonTaxableAdjustmentCents + reimbursementCents;
 
       await query(
         `INSERT INTO payroll_run_employees (
@@ -610,9 +622,26 @@ router.post('/runs/:id/process', authenticateToken, requireCapability(CAPABILITI
           totalDeductionsCents,
           netPayCents,
           'processed',
-          JSON.stringify({ tds_cents: tdsCents }),
+          JSON.stringify({
+            tds_cents: tdsCents,
+            reimbursement_cents: reimbursementCents,
+            non_taxable_adjustments_cents: nonTaxableAdjustmentCents,
+          }),
         ]
       );
+
+      if (reimbursementCents > 0) {
+        await query(
+          `UPDATE employee_reimbursements
+           SET status = 'paid',
+               payroll_run_id = $1
+           WHERE employee_id = $2
+             AND org_id = $3
+             AND status = 'approved'
+             AND payroll_run_id IS NULL`,
+          [id, ts.employee_id, run.tenant_id]
+        );
+      }
 
       totalAmount += netPayCents;
       totalEmployees++;
