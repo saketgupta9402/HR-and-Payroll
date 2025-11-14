@@ -34,13 +34,13 @@ Route prefix: `/api/v1/reimbursements`
 
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| `POST` | `/submit` | Employee (`authenticateToken`) | Accepts form-data (`category`, `amount`, `description`, `receipt`) and creates `pending` record |
+| `POST` | `/submit` | Employee (`authenticateToken`) | Accepts form-data (`category`, `amount`, `description`, `receipt`), normalizes category to canonical set, and creates `pending` record |
 | `GET` | `/my-claims` | Employee | Returns chronological history for logged-in employee |
 | `GET` | `/pending` | `requireCapability('REIMBURSEMENT_APPROVE')` | HR/Admin queue scoped to org |
 | `POST` | `/:id/approve` | Same | Marks record `approved`, captures reviewer, emits audit log |
 | `POST` | `/:id/reject` | Same | Marks record `rejected`, audit logged |
 
-*Receipts* are saved via `multer` and served statically from `REIMBURSEMENTS_RECEIPT_DIR`. Path is exposed in Express middleware (see `server/index.js`).
+*Receipts* are saved via `multer` and served statically from `REIMBURSEMENTS_RECEIPT_DIR`. Path is exposed in Express middleware (see `server/index.js`). Every reimbursement row now carries both `category_value` (canonical slug) and `category_label` (friendly string) so downstream consumers remain consistent even if historical free-text values existed.
 
 ### Capabilities
 
@@ -65,9 +65,11 @@ During `POST /api/payroll/runs/:id/process`:
 - File: `payroll-app/src/components/employee-portal/ReimbursementsTab.tsx`
 - Added as a new tab inside `EmployeePortal.tsx`
 - Features:
-  - React Hook Form with fields: category select (`Internet/Travel/Meals/Other`), amount, description, receipt upload
+  - React Hook Form with fields: canonical category dropdown (`Food`, `Travel`, `Stay`, `Local Transport`, `Office Supplies`, `Internet`, `Other`), amount, description, receipt upload
   - Submission uses `FormData` + React Query mutation to `/submit`
   - History table with status badges and receipt download links
+
+> Shared constant: `payroll-app/src/constants/reimbursements.ts` exposes the exact category list and labels used by both Employee and Admin UIs to keep UX + validation consistent.
 
 ### Admin / HR Queue
 
@@ -76,9 +78,11 @@ During `POST /api/payroll/runs/:id/process`:
 - Route: `/approve-reimbursements` registered in `App.tsx`
 - Dashboard quick-action card links to the page
 - UI:
-  - Pending claims table (employee info, category, amount, submitted timestamp)
+  - Pending claims table (employee info, canonical category label, amount, submitted timestamp)
   - Review dialog with description + receipt link
   - Approve / Reject mutations refresh the queue and toast results
+
+All API responses now include `category_value` and `category_label` so HR portals, exports, or reporting surfaces can render a friendly string without repeating mapping logic.
 
 ### API Client additions (`payroll-app/src/lib/api.ts`)
 

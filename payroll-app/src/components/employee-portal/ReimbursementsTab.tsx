@@ -3,6 +3,11 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import {
+  REIMBURSEMENT_CATEGORIES,
+  REIMBURSEMENT_CATEGORY_LABELS,
+  ReimbursementCategoryValue,
+} from "@/constants/reimbursements";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +36,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 type ReimbursementRecord = {
   id: string;
   category: string;
+  category_value?: string;
+  category_label?: string;
   amount: string | number;
   description?: string | null;
   receipt_url?: string | null;
@@ -40,13 +47,11 @@ type ReimbursementRecord = {
 };
 
 type FormValues = {
-  category: string;
+  category: ReimbursementCategoryValue;
   amount: string;
   description: string;
   receipt: File | null;
 };
-
-const CATEGORIES = ["Internet", "Travel", "Meals", "Other"] as const;
 
 const statusVariants: Record<ReimbursementRecord["status"], string> = {
   pending: "bg-amber-100 text-amber-800",
@@ -78,7 +83,7 @@ export const ReimbursementsTab = () => {
   const queryClient = useQueryClient();
   const form = useForm<FormValues>({
     defaultValues: {
-      category: CATEGORIES[0],
+      category: REIMBURSEMENT_CATEGORIES[0].value,
       amount: "",
       description: "",
       receipt: null,
@@ -112,7 +117,7 @@ export const ReimbursementsTab = () => {
     onSuccess: () => {
       toast.success("Reimbursement submitted");
       form.reset({
-        category: CATEGORIES[0],
+        category: REIMBURSEMENT_CATEGORIES[0].value,
         amount: "",
         description: "",
         receipt: null,
@@ -153,9 +158,9 @@ export const ReimbursementsTab = () => {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {CATEGORIES.map((category) => (
-                            <SelectItem key={category} value={category}>
-                              {category}
+                          {REIMBURSEMENT_CATEGORIES.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -256,9 +261,14 @@ export const ReimbursementsTab = () => {
                     ? new Date(claim.submitted_at).toLocaleString("en-IN")
                     : "-";
                   const receiptLink = resolveReceiptLink(claim.receipt_url);
+                  const categoryLabel =
+                    claim.category_label ||
+                    REIMBURSEMENT_CATEGORY_LABELS[claim.category_value || claim.category] ||
+                    claim.category ||
+                    "Other";
                   return (
                     <TableRow key={claim.id}>
-                      <TableCell className="font-medium">{claim.category}</TableCell>
+                      <TableCell className="font-medium">{categoryLabel}</TableCell>
                       <TableCell>{currencyFormatter.format(amountValue)}</TableCell>
                       <TableCell>
                         <Badge className={statusVariants[claim.status]}>{claim.status}</Badge>

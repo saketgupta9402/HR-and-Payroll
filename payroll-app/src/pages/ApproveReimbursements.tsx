@@ -2,6 +2,10 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import {
+  REIMBURSEMENT_CATEGORY_LABELS,
+  ReimbursementCategoryValue,
+} from "@/constants/reimbursements";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -30,6 +34,8 @@ type PendingReimbursement = {
   first_name?: string | null;
   last_name?: string | null;
   category: string;
+  category_value?: ReimbursementCategoryValue | string;
+  category_label?: string;
   amount: string | number;
   description?: string | null;
   receipt_url?: string | null;
@@ -141,7 +147,13 @@ const ApproveReimbursements = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {reimbursements.map((claim) => (
+                  {reimbursements.map((claim) => {
+                    const categoryLabel =
+                      claim.category_label ||
+                      REIMBURSEMENT_CATEGORY_LABELS[claim.category_value || claim.category] ||
+                      claim.category ||
+                      "Other";
+                    return (
                     <TableRow key={claim.id}>
                       <TableCell>
                         <div className="flex flex-col">
@@ -153,7 +165,7 @@ const ApproveReimbursements = () => {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>{claim.category}</TableCell>
+                        <TableCell>{categoryLabel}</TableCell>
                       <TableCell>{currencyFormatter.format(Number(claim.amount || 0))}</TableCell>
                       <TableCell>
                         {claim.submitted_at
@@ -169,7 +181,8 @@ const ApproveReimbursements = () => {
                         </Button>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}
@@ -188,7 +201,7 @@ const ApproveReimbursements = () => {
             </DialogDescription>
           </DialogHeader>
 
-          {selected && (
+              {selected && (
             <div className="space-y-4">
               <div>
                 <p className="text-sm text-muted-foreground">Employee</p>
@@ -200,7 +213,12 @@ const ApproveReimbursements = () => {
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <p className="text-sm text-muted-foreground">Category</p>
-                  <p className="font-medium">{selected.category}</p>
+                      <p className="font-medium">
+                        {selected.category_label ||
+                          REIMBURSEMENT_CATEGORY_LABELS[selected.category_value || selected.category] ||
+                          selected.category ||
+                          "Other"}
+                      </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Amount</p>

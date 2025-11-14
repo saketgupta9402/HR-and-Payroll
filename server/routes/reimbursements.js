@@ -15,6 +15,92 @@ const RECEIPTS_BASE_URL = process.env.REIMBURSEMENTS_RECEIPT_BASE_URL || '/recei
 const RECEIPTS_MAX_SIZE =
   Number(process.env.REIMBURSEMENTS_MAX_SIZE || 10 * 1024 * 1024); // default 10 MB
 
+const REIMBURSEMENT_CATEGORIES = [
+  { value: 'food', label: 'Food & Meals' },
+  { value: 'travel', label: 'Travel' },
+  { value: 'stay', label: 'Stay & Lodging' },
+  { value: 'transport', label: 'Local Transport' },
+  { value: 'office_supplies', label: 'Office Supplies' },
+  { value: 'internet', label: 'Internet & Connectivity' },
+  { value: 'other', label: 'Other' },
+];
+
+const CATEGORY_VALUES = new Set(REIMBURSEMENT_CATEGORIES.map((item) => item.value));
+const CATEGORY_LABEL_LOOKUP = REIMBURSEMENT_CATEGORIES.reduce((acc, item) => {
+  acc[item.value] = item.label;
+  return acc;
+}, {});
+
+const CATEGORY_SYNONYMS = {
+  meal: 'food',
+  meals: 'food',
+  food: 'food',
+  dining: 'food',
+  lunch: 'food',
+  dinner: 'food',
+  travel: 'travel',
+  trip: 'travel',
+  airfare: 'travel',
+  flight: 'travel',
+  stay: 'stay',
+  lodging: 'stay',
+  hotel: 'stay',
+  accommodation: 'stay',
+  transport: 'transport',
+  transportation: 'transport',
+  cab: 'transport',
+  taxi: 'transport',
+  commute: 'transport',
+  mileage: 'transport',
+  office: 'office_supplies',
+  supplies: 'office_supplies',
+  stationery: 'office_supplies',
+  hardware: 'office_supplies',
+  internet: 'internet',
+  wifi: 'internet',
+  broadband: 'internet',
+  data: 'internet',
+  misc: 'other',
+  miscellaneous: 'other',
+  other: 'other',
+};
+
+const toTitleCase = (value) =>
+  value
+    .toString()
+    .replace(/[_\s]+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+
+const normalizeCategoryValue = (rawValue) => {
+  if (rawValue === undefined || rawValue === null) {
+    return null;
+  }
+  const normalized = rawValue.toString().trim().toLowerCase();
+  if (CATEGORY_VALUES.has(normalized)) {
+    return normalized;
+  }
+  if (CATEGORY_SYNONYMS[normalized]) {
+    return CATEGORY_SYNONYMS[normalized];
+  }
+  return null;
+};
+
+const mapReimbursementRow = (row) => {
+  const canonical = normalizeCategoryValue(row.category);
+  const fallbackLabel =
+    typeof row.category === 'string' && row.category.trim().length > 0
+      ? toTitleCase(row.category)
+      : 'Other';
+  return {
+    ...row,
+    category_value: canonical || 'other',
+    category_label: canonical ? CATEGORY_LABEL_LOOKUP[canonical] : fallbackLabel,
+  };
+};
+
 fs.mkdirSync(RECEIPTS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -87,6 +173,11 @@ router.post(
         return res.status(400).json({ error: 'Category is required' });
       }
 
+      const normalizedCategory = normalizeCategoryValue(category);
+      if (!normalizedCategory) {
+        return res.status(400).json({ error: 'Invalid category' });
+      }
+
       if (amount === undefined) {
         return res.status(400).json({ error: 'Amount is required' });
       }
@@ -123,14 +214,14 @@ router.post(
         [
           employeeRecord.id,
           orgId,
-          category.trim(),
+          normalizedCategory,
           numericAmount,
           description?.trim() || null,
           receiptUrl,
         ]
       );
 
-      res.status(201).json({ reimbursement: insertResult.rows[0] });
+      res.status(201).json({ reimbursement: mapReimbursementRow(insertResult.rows[0]) });
     } catch (error) {
       console.error('Error submitting reimbursement:', error);
       res.status(500).json({ error: error.message || 'Failed to submit reimbursement' });
@@ -153,7 +244,7 @@ router.get('/my-claims', authenticateToken, async (req, res) => {
       [employeeRecord.id]
     );
 
-    res.json({ reimbursements: claimsResult.rows });
+    res.json({ reimbursements: claimsResult.rows.map(mapReimbursementRow) });
   } catch (error) {
     console.error('Error fetching reimbursement claims:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch reimbursements' });
@@ -186,7 +277,7 @@ router.get(
         [orgId]
       );
 
-      res.json({ reimbursements: pendingResult.rows });
+      res.json({ reimbursements: pendingResult.rows.map(mapReimbursementRow) });
     } catch (error) {
       console.error('Error fetching pending reimbursements:', error);
       res.status(500).json({ error: error.message || 'Failed to fetch pending reimbursements' });
@@ -221,7 +312,7 @@ const handleReview = (status) => [
         return res.status(404).json({ error: 'Reimbursement not found' });
       }
 
-      const updated = updateResult.rows[0];
+      const updated = mapReimbursementRow(updateResult.rows[0]);
 
       await audit({
         actorId: req.user.id,
