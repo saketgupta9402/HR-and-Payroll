@@ -11,7 +11,7 @@ import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { requireCapability, CAPABILITIES } from '../policy/authorize.js';
 import { audit } from '../utils/auditLog.js';
 import { Parser } from 'json2csv';
-import { calculateMonthlyTDS } from '../services/taxEngine.js';
+import { calculateMonthlyTDS, getPayrollComponents } from '../services/taxEngine.js';
 
 const getFinancialYearForDate = (dateString) => {
   const date = new Date(dateString);
@@ -581,6 +581,21 @@ router.post('/runs/:id/process', authenticateToken, requireCapability(CAPABILITI
 
       const grossPayCents = baseGrossPayCents + taxableAdjustmentCents;
 
+      const components = await getPayrollComponents(ts.employee_id, run.tenant_id);
+
+      // Find component with name containing "Basic" (case-insensitive)
+      const basicComponent = components.find(c => c.name && c.name.toLowerCase().includes('basic'));
+
+      const basicSalary= basicComponent ? Number(basicComponent.amount||0) : 0;
+      // Apply pf rule to basic salary
+      // If Basic <= 15000, PF = 12% of Basic
+      // If Basic > 15000,  PF = 12% of 15000
+      const pfWageCeiling = 15000;
+      const pfBasis = (basicSalary <= pfWageCeiling) ? basicSalary : pfWageCeiling;
+      const pfAmount = pfBasis*0.12;
+
+      const pfCents = Math.round(pfAmount*100);
+
       const reimbursementResult = await query(
         `SELECT COALESCE(SUM(amount), 0) as total_reimbursements
          FROM employee_reimbursements
@@ -603,7 +618,7 @@ router.post('/runs/:id/process', authenticateToken, requireCapability(CAPABILITI
       }
 
       const otherDeductionsCents = Math.round(grossPayCents * 0.1); // placeholder for other deductions
-      const totalDeductionsCents = tdsCents + otherDeductionsCents;
+      const totalDeductionsCents = tdsCents + pfCents + otherDeductionsCents;
       const netPayCents = grossPayCents - totalDeductionsCents + nonTaxableAdjustmentCents + reimbursementCents;
 
       await query(
@@ -624,6 +639,7 @@ router.post('/runs/:id/process', authenticateToken, requireCapability(CAPABILITI
           'processed',
           JSON.stringify({
             tds_cents: tdsCents,
+            pf_cents: pfCents,
             reimbursement_cents: reimbursementCents,
             non_taxable_adjustments_cents: nonTaxableAdjustmentCents,
           }),

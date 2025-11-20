@@ -2,9 +2,9 @@ import { query } from '../db/pool.js';
 
 const ANNUAL_MONTHS = 12;
 
-async function getPayrollComponents(employeeId, tenantId) {
+export async function getPayrollComponents(employeeId, tenantId) {
   const componentsResult = await query(
-    `SELECT ecs.amount, pc.component_type, COALESCE(ecs.is_taxable_override, pc.is_taxable) as is_taxable
+    `SELECT ecs.amount, pc.name, pc.component_type, COALESCE(ecs.is_taxable_override, pc.is_taxable) as is_taxable
      FROM employee_salary_structure ecs
      JOIN payroll_components pc ON pc.id = ecs.component_id
      WHERE ecs.employee_id = $1
