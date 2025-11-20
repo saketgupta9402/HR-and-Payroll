@@ -64,7 +64,9 @@ app.use(cors({
   origin: [
     'http://localhost:8080',
     'http://localhost:3000',
-    process.env.FRONTEND_URL
+    'http://localhost:3002', // Payroll frontend
+    process.env.FRONTEND_URL,
+    process.env.PAYROLL_FRONTEND_URL
   ].filter(Boolean),
   credentials: true
 }));

@@ -1,8 +1,9 @@
 import express from 'express';
 import PDFDocument from 'pdfkit';
 import { query } from '../db/pool.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, requireRole } from '../middleware/auth.js';
 import { requireCapability, CAPABILITIES, hasCapability } from '../policy/authorize.js';
+import statutoryReports from '../services/statutory-reports.js';
 
 const router = express.Router();
 
@@ -271,6 +272,116 @@ router.get('/form16', authenticateToken, async (req, res) => {
     } else {
       res.end();
     }
+  }
+});
+
+// ============================================
+// Statutory Reports Endpoints
+// ============================================
+
+/**
+ * GET /api/reports/statutory/pf-ecr
+ * Download PF ECR (Electronic Challan cum Return) file
+ * Query params: month (1-12), year (YYYY)
+ * Requires: HR or Admin role
+ */
+router.get('/statutory/pf-ecr', authenticateToken, requireRole('hr', 'admin', 'accountant'), async (req, res) => {
+  try {
+    const tenantId = await getTenantIdForUser(req.user.id);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No organization found' });
+    }
+
+    const month = parseInt(req.query.month, 10);
+    const year = parseInt(req.query.year, 10);
+
+    if (!month || month < 1 || month > 12 || !year || year < 2000 || year > 2100) {
+      return res.status(400).json({ error: 'Invalid month or year. Month must be 1-12, year must be valid.' });
+    }
+
+    const ecrContent = await statutoryReports.generatePFECR(tenantId, month, year);
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="PF-ECR-${String(month).padStart(2, '0')}-${year}.txt"`
+    );
+    res.send(ecrContent);
+  } catch (error) {
+    console.error('Error generating PF ECR:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message || 'Failed to generate PF ECR' });
+    } else {
+      res.end();
+    }
+  }
+});
+
+/**
+ * GET /api/reports/statutory/esi-return
+ * Download ESI Return file
+ * Query params: month (1-12), year (YYYY)
+ * Requires: HR or Admin role
+ */
+router.get('/statutory/esi-return', authenticateToken, requireRole('hr', 'admin', 'accountant'), async (req, res) => {
+  try {
+    const tenantId = await getTenantIdForUser(req.user.id);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No organization found' });
+    }
+
+    const month = parseInt(req.query.month, 10);
+    const year = parseInt(req.query.year, 10);
+
+    if (!month || month < 1 || month > 12 || !year || year < 2000 || year > 2100) {
+      return res.status(400).json({ error: 'Invalid month or year. Month must be 1-12, year must be valid.' });
+    }
+
+    const esiContent = await statutoryReports.generateESIReturn(tenantId, month, year);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="ESI-Return-${String(month).padStart(2, '0')}-${year}.csv"`
+    );
+    res.send(esiContent);
+  } catch (error) {
+    console.error('Error generating ESI Return:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message || 'Failed to generate ESI Return' });
+    } else {
+      res.end();
+    }
+  }
+});
+
+/**
+ * GET /api/reports/statutory/tds-summary
+ * Get TDS Summary for a specific month
+ * Query params: month (1-12), year (YYYY)
+ * Returns: JSON summary
+ * Requires: HR or Admin role
+ */
+router.get('/statutory/tds-summary', authenticateToken, requireRole('hr', 'admin', 'accountant'), async (req, res) => {
+  try {
+    const tenantId = await getTenantIdForUser(req.user.id);
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No organization found' });
+    }
+
+    const month = parseInt(req.query.month, 10);
+    const year = parseInt(req.query.year, 10);
+
+    if (!month || month < 1 || month > 12 || !year || year < 2000 || year > 2100) {
+      return res.status(400).json({ error: 'Invalid month or year. Month must be 1-12, year must be valid.' });
+    }
+
+    const tdsSummary = await statutoryReports.generateTDSSummary(tenantId, month, year);
+
+    res.json(tdsSummary);
+  } catch (error) {
+    console.error('Error generating TDS Summary:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate TDS Summary' });
   }
 });
 

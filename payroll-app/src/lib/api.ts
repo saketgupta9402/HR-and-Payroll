@@ -339,6 +339,85 @@ export const api = {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     },
+    
+    // Statutory Reports - These call the Payroll API which proxies to HR API
+    downloadPFECR: async (month: number, year: number) => {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:4000"}/api/reports/statutory/pf-ecr?month=${month}&year=${year}`, {
+        method: "GET",
+        credentials: "include",
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: "Failed to download PF ECR" }));
+        throw new Error(error.error || error.message || "Failed to download PF ECR");
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = `PF-ECR-${String(month).padStart(2, '0')}-${year}.txt`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    },
+    
+    downloadESIReturn: async (month: number, year: number) => {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:4000"}/api/reports/statutory/esi-return?month=${month}&year=${year}`, {
+        method: "GET",
+        credentials: "include",
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: "Failed to download ESI Return" }));
+        throw new Error(error.error || error.message || "Failed to download ESI Return");
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      
+      const contentDisposition = response.headers.get("Content-Disposition");
+      let filename = `ESI-Return-${String(month).padStart(2, '0')}-${year}.csv`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    },
+    
+    getTDSSummary: async (month: number, year: number) => {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || "http://localhost:4000"}/api/reports/statutory/tds-summary?month=${month}&year=${year}`, {
+        method: "GET",
+        credentials: "include",
+      });
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: "Failed to fetch TDS summary" }));
+        throw new Error(error.error || error.message || "Failed to fetch TDS summary");
+      }
+      
+      return response.json();
+    },
   },
 
   reimbursements: {

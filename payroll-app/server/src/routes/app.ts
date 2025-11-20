@@ -4032,3 +4032,179 @@ appRouter.get("/reports/payroll-register", requireAuth, async (req, res) => {
 // Reimbursement routes
 appRouter.use("/v1/reimbursements", requireAuth, reimbursementsRouter);
 
+// Statutory Reports Proxy - Forward requests to HR API with authentication
+appRouter.get("/reports/statutory/pf-ecr", requireAuth, async (req, res) => {
+  try {
+    const hrUserId = (req as any).hrUserId as string | null;
+    const tenantId = (req as any).tenantId as string;
+    const { month, year } = req.query;
+
+    if (!hrUserId) {
+      return res.status(403).json({ 
+        error: "HR user ID not found", 
+        message: "User must be linked to HR system to access statutory reports" 
+      });
+    }
+
+    if (!month || !year) {
+      return res.status(400).json({ error: "Month and year are required" });
+    }
+
+    // Generate JWT token for HR API
+    const hrJwtSecret = process.env.HR_JWT_SECRET || process.env.JWT_SECRET || "dev_secret";
+    const hrToken = jwt.sign(
+      { 
+        id: hrUserId,
+        org_id: tenantId
+      },
+      hrJwtSecret,
+      { expiresIn: "5m" }
+    );
+
+    // Forward request to HR API
+    const hrApiUrl = process.env.HR_API_URL || process.env.HR_BASE_URL || "http://api:3001";
+    const hrResponse = await fetch(
+      `${hrApiUrl}/api/reports/statutory/pf-ecr?month=${month}&year=${year}`,
+      {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${hrToken}`,
+          "Content-Type": "text/plain",
+        },
+      }
+    );
+
+    if (!hrResponse.ok) {
+      const error = await hrResponse.json().catch(() => ({ error: "Failed to fetch PF ECR" }));
+      return res.status(hrResponse.status).json(error);
+    }
+
+    // Forward the response
+    const content = await hrResponse.text();
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="PF-ECR-${String(month).padStart(2, '0')}-${year}.txt"`
+    );
+    res.send(content);
+  } catch (error: any) {
+    console.error("Error proxying PF ECR request:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch PF ECR" });
+  }
+});
+
+appRouter.get("/reports/statutory/esi-return", requireAuth, async (req, res) => {
+  try {
+    const hrUserId = (req as any).hrUserId as string | null;
+    const tenantId = (req as any).tenantId as string;
+    const { month, year } = req.query;
+
+    if (!hrUserId) {
+      return res.status(403).json({ 
+        error: "HR user ID not found", 
+        message: "User must be linked to HR system to access statutory reports" 
+      });
+    }
+
+    if (!month || !year) {
+      return res.status(400).json({ error: "Month and year are required" });
+    }
+
+    // Generate JWT token for HR API
+    const hrJwtSecret = process.env.HR_JWT_SECRET || process.env.JWT_SECRET || "dev_secret";
+    const hrToken = jwt.sign(
+      { 
+        id: hrUserId,
+        org_id: tenantId
+      },
+      hrJwtSecret,
+      { expiresIn: "5m" }
+    );
+
+    // Forward request to HR API
+    const hrApiUrl = process.env.HR_API_URL || process.env.HR_BASE_URL || "http://api:3001";
+    const hrResponse = await fetch(
+      `${hrApiUrl}/api/reports/statutory/esi-return?month=${month}&year=${year}`,
+      {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${hrToken}`,
+          "Content-Type": "text/csv",
+        },
+      }
+    );
+
+    if (!hrResponse.ok) {
+      const error = await hrResponse.json().catch(() => ({ error: "Failed to fetch ESI Return" }));
+      return res.status(hrResponse.status).json(error);
+    }
+
+    // Forward the response
+    const content = await hrResponse.text();
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="ESI-Return-${String(month).padStart(2, '0')}-${year}.csv"`
+    );
+    res.send(content);
+  } catch (error: any) {
+    console.error("Error proxying ESI Return request:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch ESI Return" });
+  }
+});
+
+appRouter.get("/reports/statutory/tds-summary", requireAuth, async (req, res) => {
+  try {
+    const hrUserId = (req as any).hrUserId as string | null;
+    const tenantId = (req as any).tenantId as string;
+    const { month, year } = req.query;
+
+    if (!hrUserId) {
+      return res.status(403).json({ 
+        error: "HR user ID not found", 
+        message: "User must be linked to HR system to access statutory reports" 
+      });
+    }
+
+    if (!month || !year) {
+      return res.status(400).json({ error: "Month and year are required" });
+    }
+
+    // Generate JWT token for HR API
+    const hrJwtSecret = process.env.HR_JWT_SECRET || process.env.JWT_SECRET || "dev_secret";
+    const hrToken = jwt.sign(
+      { 
+        id: hrUserId,
+        org_id: tenantId
+      },
+      hrJwtSecret,
+      { expiresIn: "5m" }
+    );
+
+    // Forward request to HR API
+    const hrApiUrl = process.env.HR_API_URL || process.env.HR_BASE_URL || "http://api:3001";
+    const hrResponse = await fetch(
+      `${hrApiUrl}/api/reports/statutory/tds-summary?month=${month}&year=${year}`,
+      {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${hrToken}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!hrResponse.ok) {
+      const error = await hrResponse.json().catch(() => ({ error: "Failed to fetch TDS Summary" }));
+      return res.status(hrResponse.status).json(error);
+    }
+
+    // Forward the JSON response
+    const data = await hrResponse.json();
+    res.json(data);
+  } catch (error: any) {
+    console.error("Error proxying TDS Summary request:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch TDS Summary" });
+  }
+});
+
