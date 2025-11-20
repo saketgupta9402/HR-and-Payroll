@@ -10,10 +10,36 @@ import { query } from '../db/pool.js';
  */
 
 /**
- * Get payroll run for a specific month/year
+ * Get payroll data for a specific month/year
+ * Checks both payroll_runs (HR system) and payroll_cycles (Payroll app system)
  */
-async function getPayrollRunForMonth(tenantId, month, year) {
-  const result = await query(
+async function getPayrollDataForMonth(tenantId, month, year) {
+  // First, try payroll_cycles (Payroll app system)
+  const cycleResult = await query(
+    `SELECT id, month, year, status, payday
+     FROM payroll_cycles
+     WHERE tenant_id = $1
+       AND month = $2
+       AND year = $3
+       AND status IN ('approved', 'completed')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [tenantId, month, year]
+  );
+  
+  if (cycleResult.rows.length > 0) {
+    return {
+      type: 'cycle',
+      id: cycleResult.rows[0].id,
+      month: cycleResult.rows[0].month,
+      year: cycleResult.rows[0].year,
+      status: cycleResult.rows[0].status,
+      pay_date: cycleResult.rows[0].payday || new Date(year, month - 1, 1)
+    };
+  }
+  
+  // Fallback to payroll_runs (HR system)
+  const runResult = await query(
     `SELECT id, pay_period_start, pay_period_end, pay_date, status
      FROM payroll_runs
      WHERE tenant_id = $1
@@ -25,46 +51,57 @@ async function getPayrollRunForMonth(tenantId, month, year) {
     [tenantId, month, year]
   );
   
-  if (result.rows.length === 0) {
-    // Check if there are any payroll runs at all for this tenant
-    const anyRunsResult = await query(
-      `SELECT 
-         EXTRACT(MONTH FROM pay_date) as month,
-         EXTRACT(YEAR FROM pay_date) as year,
-         status,
-         COUNT(*) as count
-       FROM payroll_runs
-       WHERE tenant_id = $1
-       GROUP BY EXTRACT(MONTH FROM pay_date), EXTRACT(YEAR FROM pay_date), status
-       ORDER BY year DESC, month DESC
-       LIMIT 10`,
-      [tenantId]
-    );
-    
-    let errorMessage = `No completed payroll run found for ${month}/${year}.`;
-    
-    if (anyRunsResult.rows.length > 0) {
-      const availableRuns = anyRunsResult.rows
-        .filter(row => row.status === 'completed')
-        .map(row => `${row.month}/${row.year}`)
-        .join(', ');
-      
-      if (availableRuns) {
-        errorMessage += ` Available completed payroll runs: ${availableRuns}.`;
-      } else {
-        const allRuns = anyRunsResult.rows
-          .map(row => `${row.month}/${row.year} (${row.status})`)
-          .join(', ');
-        errorMessage += ` Available payroll runs: ${allRuns}. Please complete a payroll run first.`;
-      }
-    } else {
-      errorMessage += ` No payroll runs found for this organization. Please create and process a payroll run first.`;
-    }
-    
-    throw new Error(errorMessage);
+  if (runResult.rows.length > 0) {
+    return {
+      type: 'run',
+      id: runResult.rows[0].id,
+      pay_date: runResult.rows[0].pay_date,
+      status: runResult.rows[0].status
+    };
   }
   
-  return result.rows[0];
+  // Check what's available
+  const anyCyclesResult = await query(
+    `SELECT month, year, status
+     FROM payroll_cycles
+     WHERE tenant_id = $1
+     ORDER BY year DESC, month DESC
+     LIMIT 10`,
+    [tenantId]
+  );
+  
+  const anyRunsResult = await query(
+    `SELECT 
+       EXTRACT(MONTH FROM pay_date) as month,
+       EXTRACT(YEAR FROM pay_date) as year,
+       status
+     FROM payroll_runs
+     WHERE tenant_id = $1
+     ORDER BY year DESC, month DESC
+     LIMIT 10`,
+    [tenantId]
+  );
+  
+  let errorMessage = `No completed payroll found for ${month}/${year}.`;
+  
+  const availableCycles = anyCyclesResult.rows
+    .filter(row => ['approved', 'completed'].includes(row.status))
+    .map(row => `${row.month}/${row.year}`)
+    .join(', ');
+  
+  const availableRuns = anyRunsResult.rows
+    .filter(row => row.status === 'completed')
+    .map(row => `${row.month}/${row.year}`)
+    .join(', ');
+  
+  if (availableCycles || availableRuns) {
+    const allAvailable = [availableCycles, availableRuns].filter(Boolean).join(', ');
+    errorMessage += ` Available payroll: ${allAvailable}.`;
+  } else {
+    errorMessage += ` No payroll data found. Please create and process a payroll cycle first.`;
+  }
+  
+  throw new Error(errorMessage);
 }
 
 /**
@@ -77,8 +114,8 @@ async function getPayrollRunForMonth(tenantId, month, year) {
  */
 export async function generatePFECR(tenantId, month, year) {
   try {
-    // Get payroll run
-    const payrollRun = await getPayrollRunForMonth(tenantId, month, year);
+    // Get payroll data (cycle or run)
+    const payrollData = await getPayrollDataForMonth(tenantId, month, year);
     
     // Get organization details
     const orgResult = await query(
@@ -98,27 +135,52 @@ export async function generatePFECR(tenantId, month, year) {
       throw new Error('PF Code not configured for organization');
     }
     
-    // Get employee payroll data with PF contributions
-    const employeesResult = await query(
-      `SELECT 
-        e.employee_id,
-        e.uan_number,
-        COALESCE(p.first_name || ' ' || p.last_name, p.first_name, p.last_name, '') as employee_name,
-        pre.gross_pay_cents,
-        COALESCE((pre.metadata->>'pf_cents')::bigint, 0) as pf_contribution_cents,
-        -- EPF Wages: Minimum of (Gross Pay, 15000) for PF calculation
-        LEAST(pre.gross_pay_cents, 1500000) as epf_wages_cents,
-        -- EPS Wages: Minimum of (Gross Pay, 15000) for EPS calculation
-        LEAST(pre.gross_pay_cents, 1500000) as eps_wages_cents
-       FROM payroll_run_employees pre
-       JOIN employees e ON e.id = pre.employee_id
-       JOIN profiles p ON p.id = e.user_id
-       WHERE pre.payroll_run_id = $1
-         AND pre.status = 'processed'
-         AND e.tenant_id = $2
-       ORDER BY e.employee_id`,
-      [payrollRun.id, tenantId]
-    );
+    let employeesResult;
+    
+    if (payrollData.type === 'cycle') {
+      // Use payroll_cycles and payroll_items
+      employeesResult = await query(
+        `SELECT 
+          e.employee_id,
+          e.uan_number,
+          COALESCE(p.first_name || ' ' || p.last_name, p.first_name, p.last_name, '') as employee_name,
+          (pi.gross_salary * 100)::bigint as gross_pay_cents,
+          (pi.pf_deduction * 100)::bigint as pf_contribution_cents,
+          -- EPF Wages: Minimum of (Gross Pay, 15000) for PF calculation
+          LEAST((pi.gross_salary * 100)::bigint, 1500000) as epf_wages_cents,
+          -- EPS Wages: Minimum of (Gross Pay, 15000) for EPS calculation
+          LEAST((pi.gross_salary * 100)::bigint, 1500000) as eps_wages_cents
+         FROM payroll_items pi
+         JOIN employees e ON e.id = pi.employee_id
+         JOIN profiles p ON p.id = e.user_id
+         WHERE pi.payroll_cycle_id = $1
+           AND pi.tenant_id = $2
+         ORDER BY e.employee_id`,
+        [payrollData.id, tenantId]
+      );
+    } else {
+      // Use payroll_runs and payroll_run_employees
+      employeesResult = await query(
+        `SELECT 
+          e.employee_id,
+          e.uan_number,
+          COALESCE(p.first_name || ' ' || p.last_name, p.first_name, p.last_name, '') as employee_name,
+          pre.gross_pay_cents,
+          COALESCE((pre.metadata->>'pf_cents')::bigint, 0) as pf_contribution_cents,
+          -- EPF Wages: Minimum of (Gross Pay, 15000) for PF calculation
+          LEAST(pre.gross_pay_cents, 1500000) as epf_wages_cents,
+          -- EPS Wages: Minimum of (Gross Pay, 15000) for EPS calculation
+          LEAST(pre.gross_pay_cents, 1500000) as eps_wages_cents
+         FROM payroll_run_employees pre
+         JOIN employees e ON e.id = pre.employee_id
+         JOIN profiles p ON p.id = e.user_id
+         WHERE pre.payroll_run_id = $1
+           AND pre.status = 'processed'
+           AND e.tenant_id = $2
+         ORDER BY e.employee_id`,
+        [payrollData.id, tenantId]
+      );
+    }
     
     if (employeesResult.rows.length === 0) {
       throw new Error('No employees found in payroll run');
@@ -183,8 +245,8 @@ export async function generatePFECR(tenantId, month, year) {
  */
 export async function generateESIReturn(tenantId, month, year) {
   try {
-    // Get payroll run
-    const payrollRun = await getPayrollRunForMonth(tenantId, month, year);
+    // Get payroll data (cycle or run)
+    const payrollData = await getPayrollDataForMonth(tenantId, month, year);
     
     // Get organization ESI code
     const orgResult = await query(
@@ -203,26 +265,48 @@ export async function generateESIReturn(tenantId, month, year) {
     // Calculate days in the month
     const daysInMonth = new Date(year, month, 0).getDate();
     
-    // Get employees with gross pay <= 21000 (ESI threshold)
-    // ESI is applicable if gross pay <= 21000
-    const employeesResult = await query(
-      `SELECT 
-        e.employee_id,
-        e.esi_number,
-        COALESCE(p.first_name || ' ' || p.last_name, p.first_name, p.last_name, '') as employee_name,
-        pre.gross_pay_cents,
-        -- Calculate days worked (assuming full month for now, can be enhanced)
-        $3 as days_worked
-       FROM payroll_run_employees pre
-       JOIN employees e ON e.id = pre.employee_id
-       JOIN profiles p ON p.id = e.user_id
-       WHERE pre.payroll_run_id = $1
-         AND pre.status = 'processed'
-         AND e.tenant_id = $2
-         AND pre.gross_pay_cents <= 2100000  -- 21000 * 100 (in cents)
-       ORDER BY e.employee_id`,
-      [payrollRun.id, tenantId, daysInMonth]
-    );
+    let employeesResult;
+    
+    if (payrollData.type === 'cycle') {
+      // Use payroll_cycles and payroll_items
+      employeesResult = await query(
+        `SELECT 
+          e.employee_id,
+          e.esi_number,
+          COALESCE(p.first_name || ' ' || p.last_name, p.first_name, p.last_name, '') as employee_name,
+          (pi.gross_salary * 100)::bigint as gross_pay_cents,
+          -- Calculate days worked (assuming full month for now, can be enhanced)
+          $3 as days_worked
+         FROM payroll_items pi
+         JOIN employees e ON e.id = pi.employee_id
+         JOIN profiles p ON p.id = e.user_id
+         WHERE pi.payroll_cycle_id = $1
+           AND pi.tenant_id = $2
+           AND (pi.gross_salary * 100) <= 2100000  -- 21000 * 100 (in cents)
+         ORDER BY e.employee_id`,
+        [payrollData.id, tenantId, daysInMonth]
+      );
+    } else {
+      // Use payroll_runs and payroll_run_employees
+      employeesResult = await query(
+        `SELECT 
+          e.employee_id,
+          e.esi_number,
+          COALESCE(p.first_name || ' ' || p.last_name, p.first_name, p.last_name, '') as employee_name,
+          pre.gross_pay_cents,
+          -- Calculate days worked (assuming full month for now, can be enhanced)
+          $3 as days_worked
+         FROM payroll_run_employees pre
+         JOIN employees e ON e.id = pre.employee_id
+         JOIN profiles p ON p.id = e.user_id
+         WHERE pre.payroll_run_id = $1
+           AND pre.status = 'processed'
+           AND e.tenant_id = $2
+           AND pre.gross_pay_cents <= 2100000  -- 21000 * 100 (in cents)
+         ORDER BY e.employee_id`,
+        [payrollData.id, tenantId, daysInMonth]
+      );
+    }
     
     if (employeesResult.rows.length === 0) {
       throw new Error('No employees eligible for ESI in this payroll run');
@@ -273,8 +357,8 @@ export async function generateESIReturn(tenantId, month, year) {
  */
 export async function generateTDSSummary(tenantId, month, year) {
   try {
-    // Get payroll run
-    const payrollRun = await getPayrollRunForMonth(tenantId, month, year);
+    // Get payroll data (cycle or run)
+    const payrollData = await getPayrollDataForMonth(tenantId, month, year);
     
     // Get organization details
     const orgResult = await query(
@@ -290,24 +374,46 @@ export async function generateTDSSummary(tenantId, month, year) {
     
     const org = orgResult.rows[0];
     
-    // Get TDS data from payroll_run_employees
-    const tdsResult = await query(
-      `SELECT 
-        e.employee_id,
-        e.pan_number,
-        COALESCE(p.first_name || ' ' || p.last_name, p.first_name, p.last_name, '') as employee_name,
-        pre.gross_pay_cents,
-        COALESCE((pre.metadata->>'tds_cents')::bigint, 0) as tds_cents
-       FROM payroll_run_employees pre
-       JOIN employees e ON e.id = pre.employee_id
-       JOIN profiles p ON p.id = e.user_id
-       WHERE pre.payroll_run_id = $1
-         AND pre.status = 'processed'
-         AND e.tenant_id = $2
-         AND COALESCE((pre.metadata->>'tds_cents')::bigint, 0) > 0
-       ORDER BY e.employee_id`,
-      [payrollRun.id, tenantId]
-    );
+    let tdsResult;
+    
+    if (payrollData.type === 'cycle') {
+      // Use payroll_cycles and payroll_items
+      tdsResult = await query(
+        `SELECT 
+          e.employee_id,
+          e.pan_number,
+          COALESCE(p.first_name || ' ' || p.last_name, p.first_name, p.last_name, '') as employee_name,
+          (pi.gross_salary * 100)::bigint as gross_pay_cents,
+          (pi.tds_deduction * 100)::bigint as tds_cents
+         FROM payroll_items pi
+         JOIN employees e ON e.id = pi.employee_id
+         JOIN profiles p ON p.id = e.user_id
+         WHERE pi.payroll_cycle_id = $1
+           AND pi.tenant_id = $2
+           AND (pi.tds_deduction * 100) > 0
+         ORDER BY e.employee_id`,
+        [payrollData.id, tenantId]
+      );
+    } else {
+      // Use payroll_runs and payroll_run_employees
+      tdsResult = await query(
+        `SELECT 
+          e.employee_id,
+          e.pan_number,
+          COALESCE(p.first_name || ' ' || p.last_name, p.first_name, p.last_name, '') as employee_name,
+          pre.gross_pay_cents,
+          COALESCE((pre.metadata->>'tds_cents')::bigint, 0) as tds_cents
+         FROM payroll_run_employees pre
+         JOIN employees e ON e.id = pre.employee_id
+         JOIN profiles p ON p.id = e.user_id
+         WHERE pre.payroll_run_id = $1
+           AND pre.status = 'processed'
+           AND e.tenant_id = $2
+           AND COALESCE((pre.metadata->>'tds_cents')::bigint, 0) > 0
+         ORDER BY e.employee_id`,
+        [payrollData.id, tenantId]
+      );
+    }
     
     // Group TDS by section (default to Section 192B for salary TDS)
     const summary = {
@@ -319,7 +425,7 @@ export async function generateTDSSummary(tenantId, month, year) {
       period: {
         month,
         year,
-        pay_date: payrollRun.pay_date
+        pay_date: payrollData.pay_date || new Date(year, month - 1, 1)
       },
       total_tds: 0,
       total_employees: tdsResult.rows.length,
